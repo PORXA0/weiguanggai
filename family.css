@@ -1,0 +1,265 @@
+/* ============================================================
+   微光护老 · 家人端
+   给子女看的手机页面：老人今天的用药、可疑电话、天气
+   ============================================================ */
+
+:root{
+  --ink:#14201C;
+  --ink-2:#44554E;
+  --ink-3:#7A8A83;
+  --line:#E2DACE;
+  --bg:#F4F1EB;
+  --card:#FFFFFF;
+  /* 主色跟老人端一致：暖红 */
+  --green:#B4462E;
+  --green-soft:#FBE9E2;
+  --red:#B02A1E;
+  --red-soft:#FBE8E4;
+  --amber:#A96C0B;
+  --amber-soft:#FAEFD8;
+  --sans:-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+         "PingFang SC", "Hiragino Sans GB", sans-serif;
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+
+body{
+  margin:0;
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.65;
+  color:var(--ink);
+  background:var(--bg);
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:40px;
+}
+
+h1,h2{ margin:0; font-weight:800; line-height:1.35; }
+p{ margin:0; }
+ul{ margin:0; padding:0; list-style:none; }
+button{ font:inherit; color:inherit; cursor:pointer; border:none; background:none; }
+a{ color:inherit; text-decoration:none; }
+[hidden]{ display:none !important; }
+code{ background:#EFEBE2; padding:2px 6px; border-radius:5px; font-size:.9em; }
+
+/* ---------- 头部 ---------- */
+.fhead{
+  background:linear-gradient(160deg,#1F6352,#154A3D);
+  color:#fff;
+  padding:28px 22px 30px;
+  padding-top:calc(28px + env(safe-area-inset-top));
+}
+.fh-inner{
+  max-width:620px; margin:0 auto;
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+}
+.fhead h1{ font-size:1.5rem; letter-spacing:.02em; }
+.fhead p{ font-size:.88rem; color:#A5CDBE; margin-top:4px; }
+.fh-dot{
+  flex:none; width:12px; height:12px; border-radius:50%;
+  background:#8E9E98; box-shadow:0 0 0 4px rgba(255,255,255,.12);
+  transition:background .3s;
+}
+.fh-dot.on{ background:#7BE8B8; }
+.fh-dot.off{ background:#E88A7B; }
+
+/* ---------- 卡片 ---------- */
+main{ max-width:620px; margin:0 auto; padding:0 18px; }
+
+.card{
+  margin-top:16px; padding:22px 20px;
+  background:var(--card); border-radius:18px;
+  border:1px solid var(--line);
+  box-shadow:0 4px 16px -10px rgba(20,32,28,.28);
+}
+.card h2{
+  font-size:1.02rem; color:var(--ink-2); letter-spacing:.02em;
+  margin-bottom:14px;
+}
+
+/* ---------- 连线引导 ---------- */
+.setup p{ font-size:.94rem; color:var(--ink-2); margin-bottom:16px; }
+.fld{ display:block; margin-bottom:14px; }
+.fld span{ display:block; font-size:.85rem; font-weight:700; color:var(--ink-2); margin-bottom:6px; }
+.fld input{
+  width:100%; padding:13px 15px; border-radius:12px;
+  border:2px solid var(--line); background:var(--bg);
+  font-family:inherit; font-size:1rem; color:var(--ink);
+}
+.fld input:focus{ outline:none; border-color:var(--green); background:#fff; }
+.tiny{ font-size:.8rem; color:var(--ink-3); margin-top:12px; }
+
+/* ---------- 今日概况 ---------- */
+.bigstat{ display:flex; align-items:baseline; gap:8px; }
+.bs-num{ font-size:2.8rem; font-weight:800; color:var(--green); line-height:1; }
+.bs-lbl{ font-size:.95rem; color:var(--ink-2); }
+.track{ height:10px; margin:16px 0 10px; border-radius:999px; background:#EDE8DE; overflow:hidden; }
+.track-bar{ height:100%; width:0; border-radius:999px; background:var(--green); transition:width .6s ease; }
+.stat-note{ font-size:.9rem; color:var(--ink-2); }
+
+/* ---------- 用药明细 ---------- */
+.medlist li{
+  padding:13px 0; border-top:1px dashed var(--line);
+}
+.medlist li:first-child{ border-top:none; padding-top:0; }
+.ml-top{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.ml-name{ font-size:1.02rem; font-weight:700; }
+.ml-dose{ font-size:.85rem; color:var(--ink-3); }
+.ml-times{ display:flex; flex-wrap:wrap; gap:8px; margin-top:9px; }
+.ml-t{
+  padding:5px 12px; border-radius:999px;
+  font-size:.85rem; font-weight:650; font-variant-numeric:tabular-nums;
+}
+.ml-t.done{ background:var(--green-soft); color:var(--green); }
+.ml-t.miss{ background:#F1EEE7; color:var(--ink-3); }
+
+/* ---------- 预警 ---------- */
+.alertlist li{
+  display:flex; gap:12px; padding:14px 0;
+  border-top:1px dashed var(--line);
+}
+.alertlist li:first-child{ border-top:none; padding-top:0; }
+.al-flag{
+  flex:none; width:.35rem; border-radius:999px; background:var(--line);
+}
+.al-flag.high{ background:var(--red); }
+.al-flag.mid{ background:var(--amber); }
+.al-flag.low{ background:#4E9A7E; }
+.al-body{ min-width:0; }
+.al-when{ font-size:.78rem; color:var(--ink-3); }
+.al-text{ font-size:.94rem; line-height:1.6; margin-top:3px; word-break:break-word; }
+.al-tag{ font-size:.82rem; font-weight:700; margin-top:5px; display:inline-block; }
+.al-tag.high{ color:var(--red); }
+.al-tag.mid{ color:var(--amber); }
+.al-tag.low{ color:var(--green); }
+
+/* ---------- 天气 ---------- */
+.weather-line{ font-size:1rem; line-height:1.75; color:var(--ink-2); }
+
+/* ---------- 活动与位置 ---------- */
+.care{ border-width:2px; }
+.care.is-alert{ background:var(--red-soft); border-color:#EBB9AF; }
+.care.is-alert h2{ color:var(--red); }
+.care.is-warn{ border-color:#EFDCB4; background:#FEFAF2; }
+
+.care-line{ font-size:1.28rem; font-weight:800; line-height:1.5; }
+.care-line.ok{ color:var(--green); }
+.care-line.warn{ color:var(--amber); }
+.care-line.alert{ color:var(--red); }
+
+.loc-box{
+  margin-top:16px; padding-top:16px;
+  border-top:1px dashed var(--line);
+}
+.loc-coord{
+  font-size:.86rem; color:var(--ink-3);
+  font-variant-numeric:tabular-nums; margin-bottom:12px;
+  word-break:break-all; white-space:pre-line; line-height:1.7;
+}
+.btn-map{
+  background:var(--green-soft); color:var(--green);
+  border:2px solid #EFC9BB; min-height:3rem; font-size:.98rem;
+}
+
+/* ---------- 动作 ---------- */
+.actions{ display:flex; flex-direction:column; gap:12px; margin-top:22px; }
+.btn{
+  display:flex; align-items:center; justify-content:center;
+  min-height:3.4rem; padding:14px 24px; border-radius:14px;
+  font-size:1.05rem; font-weight:800;
+  transition:transform .15s, background .15s;
+}
+.btn:active{ transform:scale(.98); }
+.btn-call{ background:var(--green); color:#fff; }
+.btn-line{ background:var(--card); color:var(--ink-2); border:2px solid var(--line); }
+
+.foot-note{
+  margin-top:22px; padding:0 4px;
+  font-size:.8rem; color:var(--ink-3); line-height:1.7;
+}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{ transition-duration:.01ms !important; animation-duration:.01ms !important; }
+}
+
+/* ---------- 近期安排 ---------- */
+.planlist li{
+  display:flex; gap:12px; align-items:baseline;
+  padding:13px 0; border-top:1px dashed var(--line);
+}
+.planlist li:first-child{ border-top:none; padding-top:0; }
+.pl-when{
+  flex:none; min-width:6.2rem;
+  font-size:.92rem; font-weight:700; color:var(--green);
+  font-variant-numeric:tabular-nums;
+}
+.pl-text{ font-size:.98rem; color:var(--ink); }
+
+/* ---------- 老人在去哪 ---------- */
+.nav-line{ font-size:1.2rem; font-weight:800; color:var(--green); line-height:1.5; }
+.card .btn-map{ margin-top:14px; }
+
+/* ---------- 家人端地图 ---------- */
+.fam-map{ margin-top:14px; height:260px; border-radius:14px; overflow:hidden; }
+
+/* ---------- 给老人留提醒 / 健康 ---------- */
+.msg-input{
+  width:100%; padding:13px 15px; border-radius:12px; margin-bottom:14px;
+  border:2px solid var(--line); background:var(--bg); font-family:inherit; font-size:1rem; color:var(--ink);
+}
+.msg-input:focus{ outline:none; border-color:var(--green); background:#fff; }
+.sentlist li{
+  display:flex; justify-content:space-between; gap:10px; align-items:baseline;
+  padding:9px 0; border-top:1px dashed var(--line); font-size:.9rem; color:var(--ink-2);
+}
+.sentlist li span{ flex:none; font-size:.78rem; color:var(--ink-3); }
+.health-line{ font-size:1.3rem; font-weight:800; color:var(--green); }
+.health-items li{
+  display:flex; justify-content:space-between; gap:10px;
+  padding:9px 0; border-top:1px dashed var(--line); font-size:.95rem;
+}
+.health-items b.ok{ color:var(--green); }
+.health-items b.warn{ color:var(--amber); }
+
+/* ---------- 老人报平安 ---------- */
+.notice{ background:linear-gradient(160deg,#FBEDE6,#F7E0D6); border-color:#EFC9BB; border-width:2px; }
+.notice-head{ display:flex; align-items:center; gap:9px; margin-bottom:12px; }
+.notice-head b{ font-size:1.1rem; color:#8E3524; }
+.notice-time{ margin-left:auto; font-size:.78rem; color:#5C7A6E; }
+.notice-dot{ width:9px; height:9px; border-radius:50%; background:#C4573A; animation:pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse{ 0%,100%{ opacity:1 } 50%{ opacity:.3 } }
+.notice-status{
+  margin:-3px 0 10px; padding:6px 10px; border-radius:8px;
+  background:rgba(255,255,255,.7); color:#7E3C2C; font-size:.8rem; font-weight:700;
+}
+.notice-text{
+  margin:0 0 14px; padding:14px 16px; border-radius:12px; background:#fff;
+  font-family:inherit; font-size:.92rem; line-height:1.85; color:var(--ink);
+  white-space:pre-wrap; word-break:break-word; max-height:16rem; overflow-y:auto;
+}
+.notice-actions{ display:flex; flex-wrap:wrap; gap:8px; }
+.notice-actions .btn{ width:auto; flex:1 1 9rem; }
+.pair-box{
+  margin:16px 0; padding:15px; border-radius:14px;
+  border:1px solid var(--line); background:#F6F9F7;
+}
+.pair-box h3{ margin:0 0 6px; font-size:1rem; color:var(--ink); }
+.pair-box input{
+  width:100%; margin:8px 0; padding:13px 14px; border-radius:10px;
+  border:2px solid var(--line); background:#fff; font:inherit;
+  font-size:1.2rem; letter-spacing:.18em; text-align:center;
+}
+.eventlist{ list-style:none; margin:10px 0 0; padding:0; }
+.eventlist li{
+  padding:10px 0; border-top:1px dashed var(--line); font-size:.86rem; line-height:1.6;
+}
+.eventlist li:first-child{ border-top:0; }
+.eventlist b{ display:block; color:var(--ink); }
+.eventlist span{ color:var(--ink-3); }
+.eventlist .ev-status{
+  display:inline-block; margin-top:4px; padding:2px 8px; border-radius:999px;
+  background:#E7EEEB; color:var(--green); font-weight:700;
+}
+.eventlist .ev-status.pending{ background:#FFF1D8; color:#8C6117; }
+.eventlist .ev-status.escalated{ background:#FCE8E2; color:#A83D27; }
+.eventlist .ev-status.resolved{ background:#E7F1EA; color:#23654E; }

@@ -1,0 +1,12 @@
+node_modules/
+voice-config.json
+traces.json
+notices.json
+auth.json
+elder-state.json
+family-messages.json
+*.tmp
+*.pem
+*.crt
+*.key
+备用-HTTPS（暂时不用）/

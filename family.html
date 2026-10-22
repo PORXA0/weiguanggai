@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1E5145">
+<title>微光护老 · 家人</title>
+<link rel="stylesheet" href="family.css">
+</head>
+<body>
+
+<header class="fhead">
+  <div class="fh-inner">
+    <div>
+      <h1 id="elderName">家里的老人</h1>
+      <p id="headSub">正在连接…</p>
+    </div>
+    <span class="fh-dot" id="linkDot"></span>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- 未连线时的引导 -->
+  <section class="card setup" id="setupCard" hidden>
+    <h2>还没有连线</h2>
+    <p>在小程序或网页里填上同步地址，或者直接在下面填一次。</p>
+    <label class="fld"><span>同步地址</span>
+      <input id="serverInput" type="text" placeholder="例如：http://192.168.1.5:8080">
+    </label>
+    <button class="btn" id="btnConnect" type="button">连接</button>
+    <div class="pair-box">
+      <h3>输入家人配对码</h3>
+      <p class="tiny">配对码显示在老人端电脑的服务窗口里，六位数字。</p>
+      <input id="pairCodeInput" type="text" inputmode="numeric" maxlength="6" placeholder="例如：123456">
+      <button class="btn" id="btnPair" type="button">完成配对</button>
+      <p class="tiny" id="pairState"></p>
+    </div>
+    <p class="tiny">也可以在网址后面加 <code>?server=地址</code>，直接打开。</p>
+  </section>
+
+  <!-- 今日概况 -->
+  <section class="card" id="todayCard" hidden>
+    <h2>今天怎么样</h2>
+    <div class="bigstat">
+      <span class="bs-num" id="medNum">—</span>
+      <span class="bs-lbl">次药已按时吃</span>
+    </div>
+    <div class="track"><div class="track-bar" id="medBar"></div></div>
+    <p class="stat-note" id="medNote"></p>
+  </section>
+
+  <!-- 活动与位置 -->
+  <section class="card care" id="careCard" hidden>
+    <h2>活动与位置</h2>
+    <div class="care-line" id="careLine"></div>
+    <p class="stat-note" id="careNote"></p>
+    <div class="loc-box" id="locBox" hidden>
+      <div class="loc-coord" id="locCoord"></div>
+      <a class="btn btn-map" id="btnMap" href="#" target="_blank" rel="noopener">在地图上查看</a>
+    </div>
+  </section>
+
+  <!-- 用药明细 -->
+  <section class="card" id="medCard" hidden>
+    <h2>用药明细</h2>
+    <ul class="medlist" id="medList"></ul>
+  </section>
+
+  <!-- 预警 -->
+  <section class="card" id="alertCard" hidden>
+    <h2>可疑电话</h2>
+    <p class="stat-note" id="alertNote"></p>
+    <ul class="alertlist" id="alertList"></ul>
+  </section>
+
+  <!-- 天气 -->
+  <section class="card" id="weatherCard" hidden>
+    <h2>今天天气</h2>
+    <p class="weather-line" id="weatherLine"></p>
+  </section>
+
+  <!-- 动作 -->
+  <!-- 老人的消息（报平安走这里） -->
+  <section class="card notice" id="noticeCard" hidden>
+    <div class="notice-head">
+      <span class="notice-dot"></span>
+      <b id="noticeTitle">老人报平安了</b>
+      <span class="notice-time" id="noticeTime"></span>
+    </div>
+    <p class="notice-status" id="noticeStatus"></p>
+    <pre class="notice-text" id="noticeText"></pre>
+    <div class="notice-actions">
+      <button class="btn btn-line" id="btnNoticeOk" type="button">我已查看</button>
+      <button class="btn btn-line" id="btnNoticeContact" type="button">已电话确认</button>
+      <button class="btn" id="btnNoticeResolve" type="button">已处置并关闭</button>
+    </div>
+  </section>
+
+  <!-- 告警处置记录 -->
+  <section class="card" id="eventCard" hidden>
+    <h2>告警处置记录</h2>
+    <p class="stat-note" id="eventMetrics"></p>
+    <ul class="eventlist" id="eventList"></ul>
+  </section>
+  <!-- 给老人留提醒 -->
+  <section class="card" id="sendCard">
+    <h2>给老人留个提醒</h2>
+    <input class="msg-input" id="msgInput" type="text" placeholder="比如：记得吃降压药">
+    <label class="fld"><span>什么时候提醒（不填就是马上）</span><input id="msgTime" type="datetime-local"></label>
+    <button class="btn" id="btnSendMsg" type="button">发过去</button>
+    <p class="tiny" id="sendState"></p>
+    <ul class="sentlist" id="sentList"></ul>
+  </section>
+
+  <!-- 健康评估 -->
+  <section class="card" id="healthCard" hidden>
+    <h2>健康评估</h2>
+    <div class="health-line" id="healthLine"></div>
+    <p class="stat-note" id="healthNote"></p>
+    <ul class="health-items" id="healthItems"></ul>
+  </section>
+  <!-- 老人在去哪 -->
+  <section class="card" id="navCard" hidden>
+    <h2>老人在去哪</h2>
+    <div class="nav-line" id="navLine"></div>
+    <p class="stat-note" id="navNoteFamily"></p>
+    <div class="fam-map" id="famMap"></div>
+    <a class="btn btn-map" id="btnDestMap" href="#" target="_blank" rel="noopener" hidden>在地图上看目的地</a>
+  </section>
+  <!-- 近期安排 -->
+  <section class="card" id="planCard" hidden>
+    <h2>近期的安排</h2>
+    <ul class="planlist" id="planListFamily"></ul>
+  </section>
+
+  <section class="actions" id="actions" hidden>
+    <a class="btn btn-call" id="btnCall" href="#">打电话给老人</a>
+    <button class="btn btn-line" id="btnRefresh" type="button">刷新</button>
+  </section>
+
+  <p class="foot-note" id="footNote" hidden></p>
+
+</main>
+
+<script src="map.js"></script>
+<script src="family.js"></script>
+</body>
+</html>

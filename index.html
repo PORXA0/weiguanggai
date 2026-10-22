@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1E5145">
+<title>微光护老</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ===== 顶部状态栏 ===== -->
+  <header class="statusbar">
+    <div class="sb-left">
+      <button class="sb-back" id="btnBack" type="button" hidden>
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        返回
+      </button>
+      <span class="sb-title" id="sbTitle">微光护老</span>
+      <span class="sb-wake" id="sbWake" hidden>
+        <span class="sb-wake-dot"></span>正在听唤醒词
+      </span>
+    </div>
+    <div class="sb-right">
+      <span class="sb-clock" id="clock">--:--</span>
+      <span class="sb-date" id="today">--</span>
+    </div>
+  </header>
+
+  <!-- ===== 内容区 ===== -->
+  <main class="stage" id="stage">
+
+    <!-- ---------- 首页 ---------- -->
+    <section class="view is-active" id="view-home">
+      <div class="weather-scene" id="weatherScene" data-kind="partly" data-phase="day" aria-hidden="true">
+        <div class="ws-sky"></div>
+        <div class="ws-stars" id="wsStars"></div>
+        <div class="ws-sun"></div>
+        <div class="ws-moon"></div>
+        <div class="ws-cloud ws-cloud-a"></div>
+        <div class="ws-cloud ws-cloud-b"></div>
+        <div class="ws-cloud ws-cloud-c"></div>
+        <div class="ws-rain" id="wsRain"></div>
+        <div class="ws-snow" id="wsSnow"></div>
+        <div class="ws-fog"><i></i><i></i><i></i></div>
+        <div class="ws-flash"></div>
+      </div>
+
+      <div class="home-hello">
+        <p class="hh-line" id="greet">今天也要好好照顾自己</p>
+        <div class="hh-time" id="bigClock">--:--</div>
+        <p class="hh-date" id="bigDate">--</p>
+      </div>
+
+      <!-- 首页只留这一个按钮：按住说话，说完松手 -->
+      <button class="mic-btn home-mic" id="btnHomeTalk" type="button">
+        <span class="mic-ring" aria-hidden="true"></span>
+        <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
+          <path d="M20 6a6 6 0 0 1 6 6v8a6 6 0 0 1-12 0v-8a6 6 0 0 1 6-6Z" stroke="currentColor" stroke-width="2.6"/>
+          <path d="M10 19v1a10 10 0 0 0 20 0v-1M20 30v5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+        </svg>
+        <b id="homeMicLabel">按住跟我说话</b>
+      </button>
+      <p class="home-mic-hint" id="homeMicHint">AI Agent 会自己拆步骤：查药、防骗、看平安状态、通知家人</p>
+      <button class="home-weather-pill" id="homeWeatherPill" type="button">
+        <span class="hwp-icon" id="homeWeatherPillIcon">🌤️</span>
+        <span id="homeWeatherPillText">正在同步天气</span>
+      </button>
+
+      <!-- 下面这些先留着但不显示：程序里还在用它们显示天气、药量、联系人这些摘要 -->
+      <div class="home-more">
+      <button class="peace-bar" id="btnShare" type="button">
+        <span class="pb-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 20s-7-4.6-7-10a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 21 10c0 5.4-7 10-7 10Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="pb-text"><b>给家人报个平安</b><span>点一下就发过去，家人马上收到</span></span>
+      </button>
+
+      <button class="home-weather" id="homeWeather" type="button"></button>
+
+      <div class="home-actions">
+        <button class="big-card card-green" data-go="talk" type="button">
+          <span class="bc-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none"><path d="M16 4a5 5 0 0 1 5 5v7a5 5 0 0 1-10 0V9a5 5 0 0 1 5-5Z" stroke="currentColor" stroke-width="2"/><path d="M8 15v1a8 8 0 0 0 16 0v-1M16 24v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </span>
+          <b>我要问事情</b>
+          <span>对着它说话</span>
+        </button>
+
+        <button class="big-card card-red" data-go="fraud" type="button">
+          <span class="bc-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none"><path d="M16 4 6 8v8c0 6.6 4.2 11.5 10 14 5.8-2.5 10-7.4 10-14V8L16 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12.5 16h7M16 12.5v7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </span>
+          <b>这是不是骗子</b>
+          <span>把对方说的话告诉它</span>
+        </button>
+
+        <button class="big-card card-amber" data-go="med" type="button">
+          <span class="bc-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none"><rect x="5" y="9" width="22" height="16" rx="4" stroke="currentColor" stroke-width="2"/><path d="M5 15h22M11 9V6M21 9V6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </span>
+          <b>该吃药了</b>
+          <span id="medSummary">还没有设置吃药提醒</span>
+        </button>
+
+        <button class="big-card card-blue" data-go="contacts" type="button">
+          <span class="bc-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none"><path d="M9 5h4l2 5-2.6 2a15 15 0 0 0 7.6 7.6L22 17l5 2v4a2.5 2.5 0 0 1-2.8 2.5A22 22 0 0 1 6.5 7.8 2.5 2.5 0 0 1 9 5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </span>
+          <b>打电话</b>
+          <span id="contactSummary">还没有添加联系人</span>
+        </button>
+
+        <button class="big-card card-amber" data-go="plan" type="button">
+          <span class="bc-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="11" stroke="currentColor" stroke-width="2"/><path d="M16 9v7l5 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <b>我的安排</b>
+          <span id="planSummary">还没有安排</span>
+        </button>
+
+        <button class="big-card card-blue" data-go="nav" type="button">
+          <span class="bc-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none"><path d="M16 4 4 26h24L16 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M16 13v7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </span>
+          <b>我要去哪</b>
+          <span id="navSummary">说一个地方，我给你带路</span>
+        </button>
+      </div>
+
+      </div>
+
+      <div class="home-status" id="envStatus"></div>
+
+      <div class="care-strip" id="careStatus"></div>
+
+    </section>
+
+    <!-- ---------- 说话 ---------- -->
+    <section class="view" id="view-talk">
+      <div class="talk-stage">
+        <div class="talk-hint" id="talkHint">按下面的大按钮说话</div>
+        <div class="talk-heard" id="talkHeard" hidden></div>
+        <div class="agent-live" id="agentLive" hidden>
+          <div class="agent-live-head">
+            <span class="agent-kicker">AI AGENT</span>
+            <b id="agentGoal">理解请求</b>
+            <span class="agent-risk normal" id="agentRisk">常规任务</span>
+          </div>
+          <p class="agent-plan-meta" id="agentPlanMeta"></p>
+          <ol class="agent-live-steps" id="agentLiveSteps"></ol>
+        </div>
+        <div class="talk-answer" id="talkAnswer" hidden></div>
+      </div>
+
+      <div class="talk-controls">
+        <button class="mic-btn" id="btnTalk" type="button">
+          <span class="mic-ring" aria-hidden="true"></span>
+          <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
+            <path d="M20 6a6 6 0 0 1 6 6v8a6 6 0 0 1-12 0v-8a6 6 0 0 1 6-6Z" stroke="currentColor" stroke-width="2.6"/>
+            <path d="M10 19v1a10 10 0 0 0 20 0v-1M20 30v5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+          </svg>
+          <b id="micLabel">按住说话</b>
+        </button>
+        <button class="btn-round" id="btnSpeakAgain" type="button" hidden>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M17 8.5a5 5 0 0 1 0 7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          再念一遍
+        </button>
+        <button class="btn-round" id="btnTraceFromTalk" type="button" data-go="trace">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.5 2.5 21 5l-2.5 2.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Agent 决策台
+        </button>
+      </div>
+
+      <div class="agent-text-row">
+        <input id="agentTextInput" type="text" autocomplete="off" placeholder="也可以在这里打字告诉 Agent">
+        <button class="btn-round" id="btnAgentTextSend" type="button">发送</button>
+      </div>
+
+      <div class="quick-ask">
+        <p class="qa-title">直接问</p>
+        <div class="qa-chips" id="quickAsk"></div>
+      </div>
+    </section>
+
+    <!-- ---------- 反诈 ---------- -->
+    <section class="view" id="view-fraud">
+      <div class="fraud-top">
+        <p class="sec-say">把对方说的话写进来</p>
+        <div class="fraud-input">
+          <textarea id="fraudText" rows="3" placeholder="例如：他说我中奖了，让我先交钱"></textarea>
+          <button class="btn-round btn-round-green" id="btnFraudVoice" type="button">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3a4 4 0 0 1 4 4v5a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4Z" stroke="currentColor" stroke-width="2"/><path d="M5 12v1a7 7 0 0 0 14 0v-1M12 20v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span id="fraudVoiceLabel">按住说</span>
+          </button>
+        </div>
+        <div class="fraud-btns">
+          <button class="btn-big btn-green" id="btnCheck" type="button">开始判断</button>
+          <button class="btn-big btn-line" id="btnFraudClear" type="button">清空</button>
+        </div>
+        <div class="fraud-hints">
+          <p class="qa-title">常见说法，点一下就能试</p>
+          <div class="qa-chips" id="fraudHints"></div>
+        </div>
+      </div>
+
+      <div class="fraud-result" id="fraudResult" hidden>
+        <div class="fr-head" id="frHead">
+          <span class="fr-level" id="frLevel">—</span>
+          <span class="fr-score"><b id="frScore">0</b> 分 / 100</span>
+        </div>
+        <div class="fr-track"><div class="fr-bar" id="frBar"></div></div>
+        <p class="fr-advice" id="frAdvice"></p>
+        <div class="fr-hits">
+          <h4>发现的疑点</h4>
+          <ul id="frHits"></ul>
+        </div>
+        <div class="fr-actions">
+          <button class="btn-big btn-green" id="btnFraudSpeak" type="button">念给我听</button>
+          <button class="btn-big btn-line" id="btnFraudSave" type="button">记下来</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 用药 ---------- -->
+    <section class="view" id="view-med">
+      <div class="med-head">
+        <h2>今天的药</h2>
+        <button class="btn-big btn-green btn-sm" id="btnAddMed" type="button">添加药品</button>
+      </div>
+      <div class="nfc-bar">
+        <button class="btn-big btn-green" id="btnNfcScan" type="button">贴卡打卡</button>
+        <p class="set-note" id="nfcNote"></p>
+      </div>
+      <div class="med-list" id="medList"></div>
+
+      <div class="med-form" id="medForm" hidden>
+        <h3>添加一种药</h3>
+        <label class="field"><span>药名</span><input id="medName" type="text" placeholder="例如：降压药"></label>
+        <label class="field"><span>一次吃多少</span><input id="medDose" type="text" placeholder="例如：1 片"></label>
+        <label class="field"><span>什么时候吃（可填多个）</span><input id="medTimes" type="text" placeholder="例如：08:00,20:00"></label>
+        <div class="form-btns">
+          <button class="btn-big btn-green" id="btnSaveMed" type="button">保存</button>
+          <button class="btn-big btn-line" id="btnCancelMed" type="button">取消</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 健康评估 ---------- -->
+    <section class="view" id="view-health">
+      <div class="med-head">
+        <h2>健康评估</h2>
+      </div>
+      <p class="sec-say">上传手环数据，或手动填写</p>
+
+      <div class="sample-row" id="healthSamples">
+        <p class="qa-title">没有数据？点一个示例看看</p>
+        <div class="qa-chips">
+          <button class="qa-chip" data-sample="jia" type="button">状态良好</button>
+          <button class="qa-chip" data-sample="yi" type="button">活动量下降</button>
+          <button class="qa-chip" data-sample="bing" type="button">多项异常</button>
+        </div>
+      </div>
+      <div class="rec-tabs">
+        <button class="rec-tab is-active" data-hmode="file" type="button">上传文件</button>
+        <button class="rec-tab" data-hmode="manual" type="button">手动填写</button>
+      </div>
+
+      <div id="hFilePanel">
+        <div class="drop" id="hDrop">
+          <p class="drop-title">点这里选择文件</p>
+          <p class="drop-sub">Excel 文件请先另存为 CSV</p>
+          <input type="file" id="hFile" accept=".csv,.txt,.tsv,text/csv,text/plain" hidden>
+        </div>
+        <p class="set-note" id="hFileNote"></p>
+      </div>
+
+      <div id="hManualPanel" hidden>
+        <label class="field"><span>日期（选填）</span><input id="hDate" type="date"></label>
+        <label class="field"><span>静息心率（次/分）</span><input id="hRestHr" type="text" inputmode="decimal" placeholder="例如 72"></label>
+        <label class="field"><span>最高心率（选填）</span><input id="hMaxHr" type="text" inputmode="decimal" placeholder="例如 110"></label>
+        <label class="field"><span>今天步数（选填）</span><input id="hSteps" type="text" inputmode="numeric" placeholder="例如 6500"></label>
+        <label class="field"><span>昨晚睡眠时长（小时，选填）</span><input id="hSleep" type="text" inputmode="decimal" placeholder="例如 7.5"></label>
+        <button class="btn-big btn-green" id="btnAssess" type="button">开始评估</button>
+      </div>
+
+      <div class="health-result" id="healthResult" hidden></div>
+      <div class="health-history" id="healthHistory"></div>
+    </section>
+
+        <!-- ---------- 我的安排 ---------- -->
+    <section class="view" id="view-plan">
+      <div class="med-head">
+        <h2>我的安排</h2>
+        <button class="btn-big btn-line btn-sm" id="btnClearPast" type="button">清理过期的</button>
+      </div>
+      <button class="btn-big btn-green" id="btnPlanVoice" type="button">按住说话，说你的安排</button>
+      <div class="plan-answer" id="planAnswer" hidden></div>
+      <div class="plan-list" id="planList"></div>
+    </section>
+
+<!-- ---------- 导航 ---------- -->
+    <section class="view" id="view-nav">
+      <div class="med-head">
+        <h2>我要去哪</h2>
+      </div>
+      <div class="nav-input">
+        <input id="navText" type="text" placeholder="说一个地方，比如：人民医院">
+        <button class="btn-big btn-green" id="btnNavGo" type="button">带我去</button>
+      </div>
+      <button class="btn-big btn-line nav-voice" id="btnNavVoice" type="button">按住说话，说你要去哪</button>
+      <p class="set-note" id="navNote"></p>
+      <div class="nav-map-box" id="navMapBox" hidden>
+        <div class="nav-map" id="navMap"></div>
+        <p class="set-note" id="navMapNote">蓝点是老人现在的位置</p>
+      </div>
+      <div class="nav-result" id="navResult" hidden></div>
+    </section>
+
+<!-- ---------- 联系人 ---------- -->
+    <section class="view" id="view-contacts">
+      <div class="med-head">
+        <h2>联系电话</h2>
+        <button class="btn-big btn-green btn-sm" id="btnAddContact" type="button">添加</button>
+      </div>
+      <div class="contact-list" id="contactList"></div>
+
+      <div class="med-form" id="contactForm" hidden>
+        <h3>添加联系人</h3>
+        <label class="field"><span>称呼</span><input id="cName" type="text" placeholder="例如：女儿"></label>
+        <label class="field"><span>电话号码</span><input id="cPhone" type="tel" placeholder="例如：13800000000"></label>
+        <div class="form-btns">
+          <button class="btn-big btn-green" id="btnSaveContact" type="button">保存</button>
+          <button class="btn-big btn-line" id="btnCancelContact" type="button">取消</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- 记录 ---------- -->
+    <section class="view" id="view-records">
+      <div class="med-head">
+        <h2>用过的记录</h2>
+        <button class="btn-big btn-line btn-sm" id="btnClearRecords" type="button">清空</button>
+      </div>
+      <div class="rec-tabs">
+        <button class="rec-tab is-active" data-rec="fraud" type="button">诈骗预警</button>
+        <button class="rec-tab" data-rec="med" type="button">吃药记录</button>
+      </div>
+      <div class="rec-list" id="recList"></div>
+    </section>
+
+    <!-- ---------- Agent 运行轨迹 ---------- -->
+    <section class="view" id="view-trace">
+      <div class="med-head">
+        <h2>Agent 决策台</h2>
+        <button class="btn-big btn-line btn-sm" id="btnClearTrace" type="button">清空</button>
+      </div>
+      <p class="set-note" id="traceSummary">规划、工具调用、安全检查和记忆都会记在这里。</p>
+      <div class="agent-memory" id="agentMemoryBox" hidden></div>
+      <div class="trace-list" id="traceList"></div>
+    </section>
+
+    <!-- ---------- 设置 ---------- -->
+    <section class="view" id="view-settings">
+      <h2>设置</h2>
+
+      <div class="set-block">
+        <h3>说话的口音</h3>
+        <p class="set-note">选你平时说的话</p>
+        <div class="chips" id="dialectChips"></div>
+      </div>
+      <div class="set-block">
+        <h3>说话的声音</h3>
+        <p class="set-note">挑一个听着舒服的</p>
+        <div class="chips" id="voiceChips"></div>
+      </div>
+
+      <div class="set-block">
+        <h3>说话快慢</h3>
+        <input class="slider" id="rateRange" type="range" min="0.6" max="1.3" step="0.05" value="0.85">
+        <div class="slider-row"><span>慢一点</span><b id="rateLabel">0.85</b><span>快一点</span></div>
+      </div>
+
+      <div class="set-block">
+        <h3>字的大小</h3>
+        <div class="chips" id="sizeChips"></div>
+      </div>
+
+      <div class="set-block">
+        <h3>试一试声音</h3>
+        <button class="btn-big btn-green" id="btnTestVoice" type="button">试听一句</button>
+      </div>
+
+      <div class="set-block">
+        <h3>我住在哪个城市</h3>
+        <p class="set-note">填上你住的城市</p>
+        <label class="field"><span>城市</span><input id="cityInput" type="text" placeholder="例如：成都"></label>
+        <button class="btn-big btn-green" id="btnSaveCity" type="button">保存并查天气</button>
+      </div>
+
+      <div class="set-block">
+        <h3>喊一声就答应</h3>
+        <p class="set-note">喊一声唤醒词，它就答应</p>
+        <label class="field"><span>唤醒词</span><input id="wakeWordInput" type="text" placeholder="微光"></label>
+        <button class="btn-big btn-line" id="btnWakeToggle" type="button">打开</button>
+      </div>
+
+      <div class="set-block">
+        <h3>和家人连线</h3>
+        <p class="set-note" id="syncState">正在检查…</p>
+        <div class="family-link" id="familyLinkBox" hidden>
+          <span class="fl-lbl">让家人用手机打开这个网址：</span>
+          <code class="fl-url" id="familyUrl"></code>
+          <button class="btn-big btn-green" id="btnCopyFamily" type="button">复制网址</button>
+        </div>
+        <div class="set-btns">
+          <button class="btn-big btn-line" id="btnPairInfo" type="button">显示配对码</button>
+          <button class="btn-big btn-line" id="btnRotatePair" type="button">更换配对码</button>
+        </div>
+        <p class="set-note pair-code-line" id="pairCodeLine" hidden></p>
+        <details class="adv">
+          <summary>连不上？手动填写同步地址</summary>
+          <label class="field" style="margin-top:14px;">
+            <span>同步地址</span>
+            <input id="serverInput" type="text" placeholder="例如：http://192.168.1.5:8080">
+          </label>
+          <button class="btn-big btn-line" id="btnSaveServer" type="button">保存并重连</button>
+        </details>
+      </div>
+
+      <div class="set-block">
+        <h3>平安看护</h3>
+        <p class="set-note">长时间没动静，就通知家人</p>
+        <label class="field"><span>多久没活动就通知家人</span>
+          <input id="inactiveInput" type="text" inputmode="numeric" placeholder="8">
+        </label>
+        <p class="set-note" style="margin-top:-8px;">单位：小时</p>
+        <button class="btn-big btn-green" id="btnSaveInactive" type="button">保存</button>
+      </div>
+
+      <div class="set-block">
+        <h3>位置与活动范围</h3>
+        <p class="set-note" id="geoNote"></p>
+        <div class="set-btns">
+          <button class="btn-big btn-line" id="btnGetLoc" type="button">获取当前位置</button>
+        </div>
+        <p class="set-note" id="locInfo" style="margin-top:12px;margin-bottom:0;"></p>
+
+        <div class="divider"></div>
+
+        <p class="set-note">走出设定范围就通知家人</p>
+        <label class="field"><span>范围大小（米）</span>
+          <input id="fenceInput" type="text" inputmode="numeric" placeholder="500">
+        </label>
+        <div class="set-btns">
+          <button class="btn-big btn-green" id="btnSetHome" type="button">把现在的位置设为家</button>
+          <button class="btn-big btn-line" id="btnStopFence" type="button">关闭范围提醒</button>
+        </div>
+        <p class="set-note" id="fenceInfo" style="margin-top:12px;margin-bottom:0;"></p>
+      </div>
+
+      <div class="set-block">
+        <h3>其他</h3>
+        <div class="set-btns">
+          <button class="btn-big btn-line" id="btnRecords" type="button">查看记录</button>
+          <button class="btn-big btn-line btn-danger" id="btnReset" type="button">清空所有数据</button>
+        </div>
+        <p class="set-note">数据只存在这台设备</p>
+      </div>
+
+      <div class="set-block">
+        <h3>设备状态</h3>
+        <ul class="diag" id="diag"></ul>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== 底部 ===== -->
+  <footer class="tabbar">
+    <button class="tab is-active" data-go="home" type="button">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1v-9.5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      首页
+    </button>
+    <button class="tab" data-go="fraud" type="button">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 4.5 6v6c0 5 3.2 8.6 7.5 10.5 4.3-1.9 7.5-5.5 7.5-10.5V6L12 3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m9 12 2 2 4-4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      防骗
+    </button>
+    <button class="tab" data-go="med" type="button">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="3" stroke="currentColor" stroke-width="2"/><path d="M4 11h16M8 7V5M16 7V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      吃药
+    </button>
+    <button class="tab" data-go="plan" type="button">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3" stroke="currentColor" stroke-width="2"/><path d="M3.5 9.5h17M8 3.5V6M16 3.5V6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9.5" cy="14" r="1.2" fill="currentColor"/><circle cx="14.5" cy="14" r="1.2" fill="currentColor"/></svg>
+      日程
+    </button>
+    <button class="tab" data-go="health" type="button">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 20s-7-4.6-7-10a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 21 10c0 5.4-7 10-7 10Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      健康
+    </button>
+    <button class="tab" data-go="contacts" type="button">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7 2 2 0 0 1 6.5 3.5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      电话
+    </button>
+    <button class="tab" data-go="settings" type="button">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3.2" stroke="currentColor" stroke-width="2"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      设置
+    </button>
+  </footer>
+
+</div>
+
+<!-- ===== 吃药提醒弹窗 ===== -->
+<div class="modal" id="reminderModal" hidden>
+  <div class="modal-box">
+    <div class="modal-ring" aria-hidden="true"></div>
+    <h3>该吃药了</h3>
+    <p class="modal-med" id="rmMedName">—</p>
+    <p class="modal-dose" id="rmMedDose">—</p>
+    <div class="modal-btns">
+      <button class="btn-big btn-green" id="btnTaken" type="button">已经吃了</button>
+      <button class="btn-big btn-line" id="btnSkip" type="button">等一会儿</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 轻提示 ===== -->
+<div class="toast" id="toast" hidden></div>
+
+<!-- ===== 报平安卡片 ===== -->
+<div class="modal" id="shareModal" hidden>
+  <div class="modal-box share-box">
+    <h3>给家人报个平安</h3>
+    <p class="share-tip">长按图片保存，再发给家人</p>
+    <div class="share-img" id="shareImgWrap"></div>
+    <div class="modal-btns">
+      <button class="btn-big btn-green" id="btnSaveCard" type="button">保存图片</button>
+      <button class="btn-big btn-line" id="btnCopyText" type="button">复制文字</button>
+      <button class="btn-big btn-line" id="btnCloseShare" type="button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="msgModal" hidden>
+  <div class="modal-box">
+    <div class="modal-ring" aria-hidden="true"></div>
+    <h3>家人给你留言了</h3>
+    <p class="modal-med" id="msgText">—</p>
+    <p class="modal-dose" id="msgFrom">来自家人的提醒</p>
+    <div class="modal-btns">
+      <button class="btn-big btn-green" id="btnMsgOk" type="button">知道了</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="planModal" hidden>
+  <div class="modal-box">
+    <div class="modal-ring" aria-hidden="true"></div>
+    <h3>到时间了</h3>
+    <p class="modal-med" id="pmText">—</p>
+    <p class="modal-dose" id="pmWhen">—</p>
+    <div class="modal-btns">
+      <button class="btn-big btn-green" id="btnPlanOk" type="button">知道了</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="agentConfirmModal" hidden>
+  <div class="modal-box">
+    <div class="modal-ring" aria-hidden="true"></div>
+    <h3 id="agentConfirmTitle">需要你确认</h3>
+    <p class="modal-med" id="agentConfirmText">—</p>
+    <p class="modal-dose">只有你同意后，Agent 才会继续这一步。</p>
+    <div class="modal-btns">
+      <button class="btn-big btn-green" id="btnAgentConfirm" type="button">同意继续</button>
+      <button class="btn-big btn-line" id="btnAgentCancel" type="button">先不要做</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="authPairModal" hidden>
+  <div class="modal-box">
+    <div class="modal-ring" aria-hidden="true"></div>
+    <h3>连接这个家庭</h3>
+    <p class="modal-med">请输入服务窗口里显示的六位配对码</p>
+    <input class="pair-code-input" id="authPairCode" type="text" inputmode="numeric" maxlength="6" placeholder="123456">
+    <p class="modal-dose" id="authPairState">仅在首次连接时需要</p>
+    <div class="modal-btns">
+      <button class="btn-big btn-green" id="btnAuthPair" type="button">完成配对</button>
+    </div>
+  </div>
+</div>
+
+<script src="map.js"></script>
+<script src="agent-core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

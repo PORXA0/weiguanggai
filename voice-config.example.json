@@ -1,0 +1,18 @@
+{
+  "provider": "xfyun",
+  "xfyun": {
+    "appId": "在这里填你的APPID",
+    "apiKey": "在这里填你的APIKey",
+    "apiSecret": "在这里填你的APISecret"
+  },
+  "llm": {
+    "baseUrl": "https://api.deepseek.com/v1/chat/completions",
+    "apiKey": "在这里填你的APIKey",
+    "model": "deepseek-chat"
+  },
+  "map": {
+    "provider": "amap",
+    "key": "在这里填你的地图Key"
+  },
+  "_说明": "复制到项目外私有目录，不要放进比赛压缩包：Documents/Codex/.weiguang-secrets/voice-config.json"
+}
