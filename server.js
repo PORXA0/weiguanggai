@@ -1240,7 +1240,8 @@ function lanAddresses() {
 }
 
 function serveStatic(req, res, urlPath) {
-  var rel = urlPath === '/' ? '/index.html' : urlPath;
+  // 根路径现在作为“选择端”首页（landing.html），老人端在 index.html，家属端在 family.html
+  var rel = urlPath === '/' ? '/landing.html' : urlPath;
   // 只公开页面资源。密钥、证书、轨迹和日志不能被静态下载。
   if (!/\.(?:html|css|js|svg|png|ico|md)$/i.test(rel)) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

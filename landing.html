@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#B4462E">
+<title>微光护老 · 选择入口</title>
+<style>
+  :root{
+    --ink:#14201C; --ink-2:#43544D; --ink-3:#6E7E77;
+    --bg:#FCF1E2; --card:#FFFCF6; --card-2:#F7EBDB;
+    --warm:#B4462E; --warm-2:#C85C3D; --warm-soft:#FBE9E2;
+    --blue:#1D5A8A; --blue-soft:#E4EEF6;
+    --line:#EADBC6;
+    --r:26px; --r-sm:16px;
+    --shadow:0 12px 30px -14px rgba(20,32,28,.4);
+    --sans:-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+           "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC", sans-serif;
+  }
+  *,*::before,*::after{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0; font-family:var(--sans); color:var(--ink);
+    background:linear-gradient(180deg, #FFF7EA 0%, #FBEFDD 55%, #F6E7D2 100%) fixed;
+    -webkit-font-smoothing:antialiased;
+    display:flex; align-items:center; justify-content:center; min-height:100%;
+    padding:24px 16px;
+  }
+  a{ text-decoration:none; color:inherit; }
+
+  .wrap{ width:100%; max-width:720px; text-align:center; }
+
+  .brand{ margin-bottom:34px; }
+  .brand-orb{
+    width:78px; height:78px; margin:0 auto 16px; border-radius:50%;
+    background:radial-gradient(circle at 32% 28%, #F2C9A8 0%, #C85C3D 42%, #9E2718 100%);
+    box-shadow:0 10px 26px -10px rgba(180,70,46,.6);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .brand-orb span{
+    color:#FFF7EA; font-weight:800; font-size:30px; letter-spacing:.1em; text-indent:.1em;
+    text-shadow:0 1px 3px rgba(120,30,10,.35);
+  }
+  .brand h1{ font-size:30px; font-weight:800; margin:0 0 6px; }
+  .brand .sub{ color:var(--ink-2); font-size:17px; }
+
+  .choices{ display:flex; gap:16px; flex-wrap:wrap; }
+  .card{
+    flex:1 1 260px; background:var(--card); border-radius:var(--r);
+    box-shadow:var(--shadow); padding:26px 22px 22px; border:1px solid var(--line);
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+    transition:transform .15s ease, box-shadow .15s ease;
+    cursor:pointer; text-align:center;
+  }
+  .card:hover{ transform:translateY(-4px); box-shadow:0 18px 38px -16px rgba(20,32,28,.45); }
+  .card .ico{
+    width:60px; height:60px; border-radius:18px; display:flex; align-items:center;
+    justify-content:center; margin-bottom:8px;
+  }
+  .card.elder .ico{ background:var(--warm-soft); color:var(--warm); }
+  .card.family .ico{ background:var(--blue-soft); color:var(--blue); }
+  .card b{ font-size:22px; font-weight:800; }
+  .card .desc{ color:var(--ink-2); font-size:15px; line-height:1.6; min-height:48px; }
+  .card .go{
+    margin-top:10px; padding:9px 26px; border-radius:999px; font-weight:800; font-size:15px;
+  }
+  .card.elder .go{ background:var(--warm); color:#FFF7EA; box-shadow:0 6px 16px -8px rgba(180,70,46,.6); }
+  .card.family .go{ background:var(--blue); color:#EAF3FA; box-shadow:0 6px 16px -8px rgba(29,90,138,.6); }
+
+  .foot{ margin-top:28px; color:var(--ink-3); font-size:13px; }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="brand">
+      <div class="brand-orb"><span>微光</span></div>
+      <h1>微光护老</h1>
+      <p class="sub">请选择您的身份进入</p>
+    </div>
+
+    <div class="choices">
+      <a class="card elder" href="index.html">
+        <span class="ico">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" aria-hidden="true">
+            <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/>
+            <path d="M4 20c0-4 3.6-6.5 8-6.5S20 16 20 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <b>老人端</b>
+        <p class="desc">我是长辈<br>日常照料 · 语音陪伴 · 用药提醒 · 安全守护</p>
+        <span class="go">进入 →</span>
+      </a>
+
+      <a class="card family" href="family.html">
+        <span class="ico">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" aria-hidden="true">
+            <path d="M12 20s-7-4.3-9.2-8.4C1.2 8.6 3 5.5 6 5.5c2 0 3.3 1 4 2.2.7-1.2 2-2.2 4-2.2 3 0 4.8 3.1 3.2 6.1C19 15.7 12 20 12 20z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <b>家属端</b>
+        <p class="desc">我是家人<br>查看老人状态 · 接收提醒 · 远程留言</p>
+        <span class="go">进入 →</span>
+      </a>
+    </div>
+
+    <p class="foot">在这里选择入口，两端功能不变，家人端首次进入需输入配对码</p>
+  </main>
+</body>
+</html>
