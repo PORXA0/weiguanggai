@@ -67,7 +67,7 @@
             </div>
             <p class="agent-monitor-text" id="agentMonitorText">我会持续关注用药、活动和平安状态；发现异常时会主动询问你。</p>
             <div class="agent-goal-input">
-              <input id="homeGoalInput" type="text" autocomplete="off" placeholder="说出今天想完成的事，例如：明早去医院复查">
+              <input id="homeGoalInput" type="text" autocomplete="off" aria-label="告诉 Agent 今天想完成的事情" placeholder="说出今天想完成的事，例如：明早去医院复查">
               <button id="btnHomeGoalSend" type="button">交给Agent</button>
             </div>
             <div class="agent-goal-chips">
@@ -169,17 +169,18 @@
     <section class="view" id="view-talk">
       <div class="talk-stage">
         <div class="talk-hint" id="talkHint">按下面的大按钮说话</div>
-        <div class="talk-heard" id="talkHeard" hidden></div>
-        <div class="agent-live" id="agentLive" hidden>
+        <div class="talk-heard" id="talkHeard" role="status" aria-live="polite" hidden></div>
+        <div class="agent-live" id="agentLive" role="status" aria-live="polite" hidden>
           <div class="agent-live-head">
             <span class="agent-kicker">AI AGENT</span>
             <b id="agentGoal">理解请求</b>
             <span class="agent-risk normal" id="agentRisk">常规任务</span>
+            <button class="agent-cancel" id="btnCancelAgent" type="button" hidden>停止</button>
           </div>
           <p class="agent-plan-meta" id="agentPlanMeta"></p>
           <ol class="agent-live-steps" id="agentLiveSteps"></ol>
         </div>
-        <div class="talk-answer" id="talkAnswer" hidden></div>
+        <div class="talk-answer" id="talkAnswer" role="status" aria-live="polite" aria-atomic="true" hidden></div>
       </div>
 
       <div class="talk-controls">
@@ -202,7 +203,7 @@
       </div>
 
       <div class="agent-text-row">
-        <input id="agentTextInput" type="text" autocomplete="off" placeholder="也可以在这里打字告诉 Agent">
+        <input id="agentTextInput" type="text" autocomplete="off" aria-label="输入想告诉 Agent 的文字" placeholder="也可以在这里打字告诉 Agent">
         <button class="btn-round" id="btnAgentTextSend" type="button">发送</button>
       </div>
 
@@ -217,7 +218,7 @@
       <div class="fraud-top">
         <p class="sec-say">把对方说的话写进来</p>
         <div class="fraud-input">
-          <textarea id="fraudText" rows="3" placeholder="例如：他说我中奖了，让我先交钱"></textarea>
+          <textarea id="fraudText" rows="3" aria-label="输入对方的可疑说法" placeholder="例如：他说我中奖了，让我先交钱"></textarea>
           <button class="btn-round btn-round-green" id="btnFraudVoice" type="button">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3a4 4 0 0 1 4 4v5a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4Z" stroke="currentColor" stroke-width="2"/><path d="M5 12v1a7 7 0 0 0 14 0v-1M12 20v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             <span id="fraudVoiceLabel">按住说</span>
@@ -334,7 +335,7 @@
         <h2>我要去哪</h2>
       </div>
       <div class="nav-input">
-        <input id="navText" type="text" placeholder="说一个地方，比如：人民医院">
+        <input id="navText" type="text" aria-label="输入要去的地方" placeholder="说一个地方，比如：人民医院">
         <button class="btn-big btn-green" id="btnNavGo" type="button">带我去</button>
       </div>
       <button class="btn-big btn-line nav-voice" id="btnNavVoice" type="button">按住说话，说你要去哪</button>
@@ -494,7 +495,10 @@
           <button class="btn-big btn-line" id="btnRecords" type="button">查看记录</button>
           <button class="btn-big btn-line btn-danger" id="btnReset" type="button">清空所有数据</button>
         </div>
-        <p class="set-note">数据只存在这台设备</p>
+        <p class="set-note">
+          本地数据优先；启用家庭同步、在线语音、大模型或地图时会按需传输必要信息。
+          <a href="PRIVACY.md" target="_blank" rel="noopener">查看完整数据流</a>
+        </p>
       </div>
 
       <div class="set-block">
@@ -540,10 +544,10 @@
 </div>
 
 <!-- ===== 吃药提醒弹窗 ===== -->
-<div class="modal" id="reminderModal" hidden>
+<div class="modal" id="reminderModal" role="dialog" aria-modal="true" aria-labelledby="reminderTitle" hidden>
   <div class="modal-box">
     <div class="modal-ring" aria-hidden="true"></div>
-    <h3>该吃药了</h3>
+    <h3 id="reminderTitle">该吃药了</h3>
     <p class="modal-med" id="rmMedName">—</p>
     <p class="modal-dose" id="rmMedDose">—</p>
     <div class="modal-btns">
@@ -554,7 +558,7 @@
 </div>
 
 <!-- ===== 轻提示 ===== -->
-<div class="toast" id="toast" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="assertive" aria-atomic="true" hidden></div>
 
 <!-- ===== 报平安卡片 ===== -->
 <div class="modal" id="shareModal" hidden>
@@ -594,7 +598,7 @@
   </div>
 </div>
 
-<div class="modal" id="agentConfirmModal" hidden>
+<div class="modal" id="agentConfirmModal" role="dialog" aria-modal="true" aria-labelledby="agentConfirmTitle" hidden>
   <div class="modal-box">
     <div class="modal-ring" aria-hidden="true"></div>
     <h3 id="agentConfirmTitle">需要你确认</h3>
@@ -612,7 +616,7 @@
     <div class="modal-ring" aria-hidden="true"></div>
     <h3>连接这个家庭</h3>
     <p class="modal-med">请输入服务窗口里显示的六位配对码</p>
-    <input class="pair-code-input" id="authPairCode" type="text" inputmode="numeric" maxlength="6" placeholder="123456">
+    <input class="pair-code-input" id="authPairCode" type="text" inputmode="numeric" maxlength="6" aria-label="六位家庭配对码" placeholder="123456">
     <p class="modal-dose" id="authPairState">仅在首次连接时需要</p>
     <div class="modal-btns">
       <button class="btn-big btn-green" id="btnAuthPair" type="button">完成配对</button>
@@ -622,6 +626,7 @@
 
 <script src="map.js"></script>
 <script src="agent-core.js"></script>
+<script src="time-parser.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

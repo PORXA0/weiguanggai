@@ -4,6 +4,8 @@
 var assert = require('assert');
 var childProcess = require('child_process');
 var fs = require('fs');
+var http = require('http');
+var net = require('net');
 var os = require('os');
 var path = require('path');
 
@@ -13,15 +15,35 @@ var sleep = function (ms) {
 
 (async function () {
   var dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'weiguang-events-'));
-  var port = 19121;
+  var testConfigPath = path.join(dataDir, 'test-config.json');
+  fs.writeFileSync(testConfigPath, JSON.stringify({ provider: 'disabled-for-tests' }));
+  var portProbe = net.createServer();
+  await new Promise(function (resolve) { portProbe.listen(0, '127.0.0.1', resolve); });
+  var port = portProbe.address().port;
+  await new Promise(function (resolve) { portProbe.close(resolve); });
+  var webhookPayloads = [];
+  var webhookServer = http.createServer(function (req, res) {
+    var body = '';
+    req.on('data', function (chunk) { body += chunk; });
+    req.on('end', function () {
+      try { webhookPayloads.push(JSON.parse(body)); } catch (e) {}
+      res.writeHead(204);
+      res.end();
+    });
+  });
+  await new Promise(function (resolve) { webhookServer.listen(0, '127.0.0.1', resolve); });
+  var webhookPort = webhookServer.address().port;
   var child = childProcess.spawn(process.execPath, ['server.js'], {
     cwd: __dirname,
     env: Object.assign({}, process.env, {
       HTTP_ONLY: '1',
       PORT: String(port),
       WEIGUANG_DATA_DIR: dataDir,
+      WEIGUANG_CONFIG: testConfigPath,
       WEIGUANG_HIGH_ESCALATE_MS: '150',
-      WEIGUANG_AUTH_MODE: 'paired'
+      WEIGUANG_AUTH_MODE: 'paired',
+      WEIGUANG_ALERT_WEBHOOK: 'http://127.0.0.1:' + webhookPort + '/alert',
+      WEIGUANG_ESCALATION_WEBHOOK: 'http://127.0.0.1:' + webhookPort + '/backup'
     }),
     stdio: 'ignore'
   });
@@ -40,12 +62,17 @@ var sleep = function (ms) {
     var ready = false;
     for (var i = 0; i < 30; i++) {
       try {
-        var ping = await request('/api/ping');
-        if (ping && ping.ok) { ready = true; break; }
+    var ping = await request('/api/ping');
+    if (ping && ping.ok) { ready = true; break; }
       } catch (e) {}
       await sleep(150);
     }
     assert(ready, '服务未能启动');
+
+    var headerResponse = await fetch('http://127.0.0.1:' + port + '/api/ping');
+    assert.strictEqual(headerResponse.headers.get('x-content-type-options'), 'nosniff');
+    assert((headerResponse.headers.get('content-security-policy') || '').includes("script-src 'self'"),
+      '服务必须返回 CSP 安全头');
 
     var auth = JSON.parse(fs.readFileSync(path.join(dataDir, 'auth.json'), 'utf8'));
     authToken = auth.token;
@@ -91,10 +118,21 @@ var sleep = function (ms) {
     var pending = await request('/api/family/notify');
     assert.strictEqual(pending.notices.length, 1);
     assert.strictEqual(pending.notices[0].status, 'pending');
+    await sleep(120);
+    assert(webhookPayloads.some(function (payload) {
+      return payload.event === 'weiguang.care.alert' && payload.id === eventId;
+    }), '高优先级事件必须投递到已配置的离线告警出口');
 
     await sleep(220);
     var escalated = await request('/api/family/events');
     assert.strictEqual(escalated.events[0].status, 'escalated', '超时事件必须升级');
+    await sleep(120);
+    assert(webhookPayloads.some(function (payload) {
+      return payload.event === 'weiguang.care.escalated' && payload.id === eventId;
+    }), '升级事件必须再次投递离线告警');
+    assert(webhookPayloads.filter(function (payload) {
+      return payload.event === 'weiguang.care.escalated' && payload.id === eventId;
+    }).length >= 2, '升级事件必须同时投递备用出口');
 
     var acked = await request('/api/family/events/update', {
       method: 'POST',
@@ -147,10 +185,40 @@ var sleep = function (ms) {
     var persisted = JSON.parse(fs.readFileSync(path.join(dataDir, 'notices.json'), 'utf8'));
     assert.strictEqual(persisted.length, 1);
     assert.strictEqual(persisted[0].status, 'resolved');
+    assert(fs.existsSync(path.join(dataDir, 'notices.json.bak')), '关键数据必须保留上一份备份');
 
-    console.log('Family event lifecycle tests passed:', 17);
+    var watchdogState = await request('/api/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        elderName: '测试老人',
+        lastActiveAt: Date.now() - 2 * 3600000,
+        inactiveLimit: 1,
+        updatedAt: Date.now()
+      })
+    });
+    assert.strictEqual(watchdogState.watchdogCreated, 1, '服务端必须补发超时看护告警');
+    var watchdogEvents = await request('/api/family/events');
+    var watchdogEvent = watchdogEvents.events.filter(function (event) {
+      return event.source === 'care-watchdog';
+    })[0];
+    assert(watchdogEvent, '服务端看护告警必须进入家庭事件列表');
+    assert.strictEqual(watchdogEvent.level, 'high');
+
+    var oversized = await fetch('http://127.0.0.1:' + port + '/api/family/msg', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-weiguang-token': authToken
+      },
+      body: JSON.stringify({ text: 'x'.repeat(20 * 1024) })
+    });
+    assert.strictEqual(oversized.status, 413, '超大 JSON 请求必须被拒绝');
+
+    console.log('Family event lifecycle tests passed');
   } finally {
     try { child.kill(); } catch (e) {}
+    try { webhookServer.close(); } catch (e) {}
     await sleep(250);
     try {
       var resolvedDir = path.resolve(dataDir);

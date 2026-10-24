@@ -263,3 +263,11 @@ main{ max-width:620px; margin:0 auto; padding:0 18px; }
 .eventlist .ev-status.pending{ background:#FFF1D8; color:#8C6117; }
 .eventlist .ev-status.escalated{ background:#FCE8E2; color:#A83D27; }
 .eventlist .ev-status.resolved{ background:#E7F1EA; color:#23654E; }
+
+button:focus-visible,
+input:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible{
+  outline:3px solid #175C4B !important;
+  outline-offset:3px !important;
+}

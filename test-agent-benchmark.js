@@ -29,6 +29,20 @@ var cases = [
   { text: '我喘不上气', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
   { text: '胸口疼得厉害', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
   { text: '我头晕，帮我通知家人，再给女儿打电话', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
+  { text: '救命', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
+  { text: '快来救我', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
+  { text: '我喘不过气', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
+  { text: '我胸口发闷', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
+  { text: '我现在站不起来', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
+  { text: '我不小心磕破头了', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
+  { text: '我找不到回家的路了', tools: ['get_care_status', 'find_contact', 'notify_family', 'prepare_call'], risk: 'urgent' },
+  { text: '我没有摔倒，别通知家人', notRisk: 'urgent', notContains: ['notify_family'] },
+  { text: '别通知家人，我只是有点头晕', contains: ['get_care_status', 'ask_user'], risk: 'caution', notContains: ['notify_family'] },
+  { text: '我没有摔倒，但现在喘不上气', risk: 'urgent', contains: ['notify_family'] },
+  { text: '电视里有人喊救命', notRisk: 'urgent', notContains: ['notify_family'] },
+  { text: '我看到新闻里有人喘不过气', notRisk: 'urgent', notContains: ['notify_family'] },
+  { text: '我孙子摔倒了', risk: 'caution', tools: ['prepare_emergency_call', 'ask_user'] },
+  { text: '我就命，揣不上气', risk: 'urgent', contains: ['notify_family'] },
   { text: '如果我摔倒了怎么办', notRisk: 'urgent' },
   { text: '假如我不舒服要联系谁', notRisk: 'urgent' },
   { text: '先看看天气，然后提醒我下午去公园', contains: ['get_weather', 'create_reminder'], remote: true },
@@ -45,6 +59,7 @@ cases.forEach(function (test) {
   var ok = true;
   if (test.tools && JSON.stringify(toolNames) !== JSON.stringify(test.tools)) ok = false;
   if (test.contains && !test.contains.every(function (name) { return toolNames.indexOf(name) >= 0; })) ok = false;
+  if (test.notContains && test.notContains.some(function (name) { return toolNames.indexOf(name) >= 0; })) ok = false;
   if (test.risk && plan.risk !== test.risk) ok = false;
   if (test.notRisk && plan.risk === test.notRisk) ok = false;
   if (test.remote != null && agent.shouldUseRemote(test.text, plan) !== test.remote) ok = false;

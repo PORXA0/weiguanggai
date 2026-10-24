@@ -148,7 +148,15 @@
         el.className = 'wgmap-mark ' + (m.type || '');
         el.style.left = q.x + 'px';
         el.style.top = q.y + 'px';
-        el.innerHTML = '<span class="wm-dot"></span>' + (m.label ? '<span class="wm-label">' + m.label + '</span>' : '');
+        var dot = document.createElement('span');
+        dot.className = 'wm-dot';
+        el.appendChild(dot);
+        if (m.label) {
+          var label = document.createElement('span');
+          label.className = 'wm-label';
+          label.textContent = String(m.label).slice(0, 80);
+          el.appendChild(label);
+        }
         markBox.appendChild(el);
       });
     }

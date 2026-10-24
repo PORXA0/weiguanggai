@@ -32,7 +32,7 @@
     <div class="pair-box">
       <h3>输入家人配对码</h3>
       <p class="tiny">配对码显示在老人端电脑的服务窗口里，六位数字。</p>
-      <input id="pairCodeInput" type="text" inputmode="numeric" maxlength="6" placeholder="例如：123456">
+      <input id="pairCodeInput" type="text" inputmode="numeric" maxlength="6" aria-label="六位家庭配对码" placeholder="例如：123456">
       <button class="btn" id="btnPair" type="button">完成配对</button>
       <p class="tiny" id="pairState"></p>
     </div>
@@ -82,13 +82,13 @@
 
   <!-- 动作 -->
   <!-- 老人的消息（报平安走这里） -->
-  <section class="card notice" id="noticeCard" hidden>
+  <section class="card notice" id="noticeCard" role="alert" aria-live="assertive" aria-atomic="true" hidden>
     <div class="notice-head">
       <span class="notice-dot"></span>
       <b id="noticeTitle">老人报平安了</b>
       <span class="notice-time" id="noticeTime"></span>
     </div>
-    <p class="notice-status" id="noticeStatus"></p>
+    <p class="notice-status" id="noticeStatus" role="status" aria-live="polite"></p>
     <pre class="notice-text" id="noticeText"></pre>
     <div class="notice-actions">
       <button class="btn btn-line" id="btnNoticeOk" type="button">我已查看</button>
@@ -106,7 +106,7 @@
   <!-- 给老人留提醒 -->
   <section class="card" id="sendCard">
     <h2>给老人留个提醒</h2>
-    <input class="msg-input" id="msgInput" type="text" placeholder="比如：记得吃降压药">
+    <input class="msg-input" id="msgInput" type="text" aria-label="给老人留言" placeholder="比如：记得吃降压药">
     <label class="fld"><span>什么时候提醒（不填就是马上）</span><input id="msgTime" type="datetime-local"></label>
     <button class="btn" id="btnSendMsg" type="button">发过去</button>
     <p class="tiny" id="sendState"></p>

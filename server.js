@@ -28,6 +28,10 @@ var PREFERRED_DATA_DIR = path.join(os.homedir(), 'Documents', 'Codex', '.weiguan
 var DATA_DIR = process.env.WEIGUANG_DATA_DIR || PREFERRED_DATA_DIR;
 var HIGH_ESCALATE_MS = Number(process.env.WEIGUANG_HIGH_ESCALATE_MS) || 3 * 60 * 1000;
 var NORMAL_ESCALATE_MS = Number(process.env.WEIGUANG_NORMAL_ESCALATE_MS) || 10 * 60 * 1000;
+var RETENTION_DAYS = Math.max(1, Number(process.env.WEIGUANG_RETENTION_DAYS) || 180);
+var ALERT_WEBHOOK = String(process.env.WEIGUANG_ALERT_WEBHOOK || '').trim();
+var ESCALATION_WEBHOOK = String(process.env.WEIGUANG_ESCALATION_WEBHOOK || '').trim();
+var VERBOSE_LOGS = process.env.WEIGUANG_VERBOSE_LOGS === '1';
 var AUTH_MODE = String(process.env.WEIGUANG_AUTH_MODE || 'open').toLowerCase();
 try {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -98,7 +102,13 @@ function parseCookies(req) {
   String(req.headers.cookie || '').split(';').forEach(function (part) {
     var i = part.indexOf('=');
     if (i < 0) return;
-    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    var value = part.slice(i + 1).trim();
+    try {
+      value = decodeURIComponent(value);
+    } catch (e) {
+      value = '';
+    }
+    out[part.slice(0, i).trim()] = value;
   });
   return out;
 }
@@ -389,14 +399,27 @@ function xfyunTts(text, speed, vcn) {
   });
 }
 
+function readJsonWithBackup(file, fallback) {
+  var candidates = [file, file + '.bak'];
+  for (var i = 0; i < candidates.length; i++) {
+    try {
+      if (fs.existsSync(candidates[i])) {
+        var parsed = JSON.parse(fs.readFileSync(candidates[i], 'utf8'));
+        if (i > 0) {
+          try { fs.copyFileSync(candidates[i], file); } catch (e) {}
+          console.log('已从备份恢复数据文件：' + path.basename(file));
+        }
+        return parsed;
+      }
+    } catch (e) {}
+  }
+  return fallback;
+}
+
 /* 老人发给家人的协同事件：带确认、联系、处置和升级状态。 */
 var NOTICE_FILE = path.join(DATA_DIR, 'notices.json');
-var elderNotices = [];
-try {
-  if (fs.existsSync(NOTICE_FILE)) {
-    elderNotices = JSON.parse(fs.readFileSync(NOTICE_FILE, 'utf8')) || [];
-  }
-} catch (e) { elderNotices = []; }
+var elderNotices = readJsonWithBackup(NOTICE_FILE, []);
+if (!Array.isArray(elderNotices)) elderNotices = [];
 
 elderNotices = elderNotices.slice(0, 100).map(function (n) {
   n.id = n.id || ('n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5));
@@ -407,19 +430,112 @@ elderNotices = elderNotices.slice(0, 100).map(function (n) {
 });
 
 function saveNotices() {
+  return writeJsonAtomic(NOTICE_FILE, elderNotices.slice(0, 100));
+}
+
+/*
+ * 可选的离线告警出口。部署者可以把 WEIGUANG_ALERT_WEBHOOK 指向企业微信
+ * 机器人、自动化平台或自己的短信网关。未配置时事件仍保存在家庭端。
+ */
+function deliverAlertWebhook(notice, eventName, attempt, targetUrl) {
+  var webhookUrl = String(targetUrl || ALERT_WEBHOOK || '').trim();
+  if (!webhookUrl || !notice) return;
+  if (notice.status === 'resolved') return;
+  var retryAttempt = Number(attempt) || 0;
+  var maxAttempts = 3;
+  notice.delivery = retryAttempt ? 'retrying' : 'pending';
+  notice.deliveryAt = Date.now();
+  saveNotices();
+  var target;
   try {
-    fs.writeFileSync(NOTICE_FILE, JSON.stringify(elderNotices.slice(0, 100), null, 1));
-  } catch (e) {}
+    target = new URL(webhookUrl);
+  } catch (e) {
+    return;
+  }
+  if (target.protocol !== 'https:' && target.protocol !== 'http:') return;
+  var payload = JSON.stringify({
+    event: eventName || 'weiguang.care.alert',
+    id: notice.id,
+    level: notice.level,
+    kind: notice.kind,
+    text: notice.text,
+    at: notice.at,
+    status: notice.status,
+    attempt: retryAttempt + 1
+  });
+  var settled = false;
+  function retryOrFail() {
+    if (settled) return false;
+    settled = true;
+    if (retryAttempt + 1 < maxAttempts) {
+      notice.delivery = 'retrying';
+      notice.deliveryAt = Date.now();
+      saveNotices();
+      var delay = retryAttempt === 0 ? 1000 : 5000;
+      var retryTimer = setTimeout(function () {
+        deliverAlertWebhook(notice, eventName, retryAttempt + 1, webhookUrl);
+      }, delay);
+      if (retryTimer && retryTimer.unref) retryTimer.unref();
+      return true;
+    }
+    notice.delivery = 'failed';
+    notice.deliveryAt = Date.now();
+    saveNotices();
+    return false;
+  }
+  var transport = target.protocol === 'http:' ? http : https;
+  var request = transport.request({
+    hostname: target.hostname,
+    port: target.port || (target.protocol === 'https:' ? 443 : 80),
+    path: target.pathname + (target.search || ''),
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload)
+    },
+    timeout: 5000
+  }, function (response) {
+    response.resume();
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      settled = true;
+      notice.delivery = 'sent';
+      notice.deliveryAt = Date.now();
+      notice.deliveryEvent = eventName || 'weiguang.care.alert';
+      saveNotices();
+    } else {
+      retryOrFail();
+    }
+  });
+  request.on('timeout', function () { request.destroy(new Error('webhook timeout')); });
+  request.on('error', retryOrFail);
+  request.end(payload);
 }
 
 function isUnresolvedNotice(n) {
   return n && n.status !== 'resolved';
 }
 
+function resumePendingWebhookDeliveries() {
+  if (!ALERT_WEBHOOK) return;
+  elderNotices.forEach(function (notice) {
+    if (notice.level === 'high' &&
+        (notice.delivery === 'pending' || notice.delivery === 'retrying')) {
+      deliverAlertWebhook(
+        notice,
+        notice.status === 'escalated' ? 'weiguang.care.escalated' : 'weiguang.care.alert'
+      );
+    }
+  });
+}
+
+var webhookResumeTimer = setTimeout(resumePendingWebhookDeliveries, 2000);
+if (webhookResumeTimer && webhookResumeTimer.unref) webhookResumeTimer.unref();
+
 function updateNoticeEvents(ids, action) {
   var wanted = Array.isArray(ids) ? ids : [];
   var now = Date.now();
   var changed = 0;
+  var snapshot = elderNotices.map(function (notice) { return Object.assign({}, notice); });
   elderNotices.forEach(function (n) {
     if (wanted.indexOf(n.id) < 0) return;
     if (action === 'ack' && (n.status === 'pending' || n.status === 'escalated')) {
@@ -439,7 +555,10 @@ function updateNoticeEvents(ids, action) {
     n.updatedAt = now;
     changed++;
   });
-  if (changed) saveNotices();
+  if (changed && !saveNotices()) {
+    elderNotices = snapshot;
+    return -1;
+  }
   return changed;
 }
 
@@ -459,6 +578,7 @@ function noticeMetrics() {
     unresolved: unresolved.length,
     pending: unresolved.filter(function (n) { return n.status === 'pending'; }).length,
     escalated: unresolved.filter(function (n) { return n.status === 'escalated'; }).length,
+    failedDeliveries: unresolved.filter(function (n) { return n.delivery === 'failed'; }).length,
     avgAckMs: avgAckMs
   };
 }
@@ -468,15 +588,26 @@ function noticeMetrics() {
 function escalateOverdueNotices() {
   var now = Date.now();
   var changed = 0;
+  var escalated = [];
   elderNotices.forEach(function (n) {
     if ((n.status === 'pending' || n.status === 'acknowledged') &&
         now > (n.deadlineAt || now) && n.status !== 'contacted') {
       n.status = 'escalated';
       n.escalatedAt = n.escalatedAt || now;
+      escalated.push(n);
       changed++;
     }
   });
-  if (changed) saveNotices();
+  if (changed) {
+    if (!saveNotices()) return -1;
+    escalated.forEach(function (notice) {
+      deliverAlertWebhook(notice, 'weiguang.care.escalated');
+      if (ESCALATION_WEBHOOK && ESCALATION_WEBHOOK !== ALERT_WEBHOOK) {
+        deliverAlertWebhook(notice, 'weiguang.care.escalated', 0, ESCALATION_WEBHOOK);
+      }
+    });
+  }
+  return changed;
 }
 
 var noticeTimer = setInterval(escalateOverdueNotices, 30 * 1000);
@@ -484,52 +615,153 @@ if (noticeTimer && noticeTimer.unref) noticeTimer.unref();
 
 function writeJsonAtomic(file, value) {
   var tmp = file + '.tmp';
+  var backup = file + '.bak';
+  var fd = null;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(value, null, 1));
-    try { fs.renameSync(tmp, file); }
-    catch (e) {
-      try { fs.unlinkSync(file); } catch (ignore) {}
-      fs.renameSync(tmp, file);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    if (fs.existsSync(file)) {
+      try { fs.copyFileSync(file, backup); } catch (e) {}
     }
-  } catch (e) {}
+    fd = fs.openSync(tmp, 'w');
+    fs.writeFileSync(fd, JSON.stringify(value, null, 1), 'utf8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(tmp, file);
+    return true;
+  } catch (e) {
+    if (fd != null) {
+      try { fs.closeSync(fd); } catch (ignore) {}
+    }
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (ignore) {}
+    console.log('[' + new Date().toLocaleTimeString() + '] 数据保存失败：' + e.message);
+    return false;
+  }
 }
 
 /* 家人留言和老人最新状态持久化到数据目录，服务重启后继续可用。 */
 var MESSAGE_FILE = path.join(DATA_DIR, 'family-messages.json');
 var STATE_FILE = path.join(DATA_DIR, 'elder-state.json');
-var familyMsgs = [];
-var state = null;
+var familyMsgs = readJsonWithBackup(MESSAGE_FILE, []);
+var state = readJsonWithBackup(STATE_FILE, null);
 var stateAt = 0;
 
-try {
-  if (fs.existsSync(MESSAGE_FILE)) familyMsgs = JSON.parse(fs.readFileSync(MESSAGE_FILE, 'utf8')) || [];
-} catch (e) { familyMsgs = []; }
-try {
-  if (fs.existsSync(STATE_FILE)) {
-    state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    stateAt = Number(state && state.receivedAt) || 0;
-  }
-} catch (e) { state = null; stateAt = 0; }
+if (!Array.isArray(familyMsgs)) familyMsgs = [];
+stateAt = Number(state && state.receivedAt) || 0;
 
 function saveFamilyMessages() {
-  writeJsonAtomic(MESSAGE_FILE, familyMsgs.slice(0, 50));
+  return writeJsonAtomic(MESSAGE_FILE, familyMsgs.slice(0, 50));
 }
 
 function saveElderState() {
-  writeJsonAtomic(STATE_FILE, state);
+  return writeJsonAtomic(STATE_FILE, state);
 }
+
+/*
+ * 服务端看护哨兵：不再只依赖老人端页面里的 setInterval。
+ * 只要老人端曾经同步过，服务重启后也能根据最后一次活动时间补发告警。
+ * 家人页面关闭时不会产生系统推送，但事件会留在服务端，供家人下次打开查看。
+ */
+function addWatchdogNotice(key, text, kind, level) {
+  if (elderNotices.some(function (n) {
+    return n.watchdogKey === key && isUnresolvedNotice(n);
+  })) {
+    return false;
+  }
+  var now = Date.now();
+  var high = level === 'high';
+  var id = 'watchdog-' + crypto.createHash('sha1').update(key).digest('hex').slice(0, 16);
+  if (elderNotices.some(function (n) { return n.id === id; })) return false;
+  var n = {
+    id: id,
+    watchdogKey: key,
+    source: 'care-watchdog',
+    text: String(text).slice(0, 500),
+    kind: String(kind || '自动看护').slice(0, 12),
+    level: high ? 'high' : 'normal',
+    status: 'pending',
+    at: now,
+    createdAt: now,
+    deadlineAt: now + (high ? HIGH_ESCALATE_MS : NORMAL_ESCALATE_MS)
+  };
+  elderNotices.unshift(n);
+  if (elderNotices.length > 100) elderNotices.length = 100;
+  if (!saveNotices()) {
+    elderNotices = elderNotices.filter(function (notice) { return notice.id !== n.id; });
+    return false;
+  }
+  if (high) deliverAlertWebhook(n);
+  console.log('[' + new Date().toLocaleTimeString() + '] 服务端看护告警：' +
+    n.kind + '（' + n.id + '）');
+  return true;
+}
+
+function runCareWatchdog() {
+  if (!state || !state.lastActiveAt) return 0;
+  var now = Date.now();
+  var last = Number(state.lastActiveAt) || 0;
+  var limitHours = Math.max(0.25, Number(state.inactiveLimit) || 8);
+  var created = 0;
+  var name = state.elderName || '老人';
+  // 老人端会先主动询问，服务端多等 5 分钟再兜底，避免双重告警。
+  var inactiveThresholdMs = limitHours * 3600000 + 5 * 60 * 1000;
+  if (last && now - last >= inactiveThresholdMs) {
+    if (addWatchdogNotice(
+      'inactive:' + last + ':' + limitHours,
+      name + '已超过 ' + limitHours + ' 小时没有活动，请尽快电话确认。最后活动时间：' +
+        new Date(last).toLocaleString('zh-CN'),
+      '自动看护',
+      'high'
+    )) created++;
+  }
+  var fence = state.fence;
+  if (fence && fence.away && state.location && state.location.at) {
+    if (addWatchdogNotice(
+      'fence:' + state.location.at + ':' + Math.round(Number(fence.distance) || 0),
+      name + '已经离开活动范围约 ' + Math.round(Number(fence.distance) || 0) + ' 米，请确认位置。',
+      '离开范围',
+      'high'
+    )) created++;
+  }
+  return created;
+}
+
+var watchdogInterval = Number(process.env.WEIGUANG_WATCHDOG_INTERVAL_MS) || 60 * 1000;
+var careWatchdogTimer = setInterval(runCareWatchdog, Math.max(1000, watchdogInterval));
+if (careWatchdogTimer && careWatchdogTimer.unref) careWatchdogTimer.unref();
 
 /* Agent 运行轨迹：老人端每交互一次就送一条上来。
    落盘保存，服务重启也不丢，家人端和评委随时能查。 */
 var TRACE_FILE = path.join(DATA_DIR, 'traces.json');
-var traces = [];
-try {
-  if (fs.existsSync(TRACE_FILE)) traces = JSON.parse(fs.readFileSync(TRACE_FILE, 'utf8')) || [];
-} catch (e) { traces = []; }
+var traces = readJsonWithBackup(TRACE_FILE, []);
+if (!Array.isArray(traces)) traces = [];
 
 function saveTraces() {
-  writeJsonAtomic(TRACE_FILE, traces.slice(0, 200));
+  return writeJsonAtomic(TRACE_FILE, traces.slice(0, 200));
 }
+
+function pruneRetainedData() {
+  var cutoff = Date.now() - RETENTION_DAYS * 86400000;
+  var noticesBefore = elderNotices.length;
+  var messagesBefore = familyMsgs.length;
+  var tracesBefore = traces.length;
+  elderNotices = elderNotices.filter(function (notice) {
+    return isUnresolvedNotice(notice) || (Number(notice.at) || 0) >= cutoff;
+  });
+  familyMsgs = familyMsgs.filter(function (message) {
+    return (Number(message.createdAt || message.at) || 0) >= cutoff;
+  });
+  traces = traces.filter(function (trace) {
+    return (Number(trace.at) || 0) >= cutoff;
+  });
+  if (noticesBefore !== elderNotices.length) saveNotices();
+  if (messagesBefore !== familyMsgs.length) saveFamilyMessages();
+  if (tracesBefore !== traces.length) saveTraces();
+}
+
+var retentionTimer = setInterval(pruneRetainedData, 24 * 3600 * 1000);
+if (retentionTimer && retentionTimer.unref) retentionTimer.unref();
+setTimeout(pruneRetainedData, 1000).unref();
 
 var MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -577,6 +809,9 @@ function llmComplete(messages, options) {
   options = options || {};
   return new Promise(function (resolve, reject) {
     if (!llmConfig) { reject(new Error('未配置大模型')); return; }
+    var settled = false;
+    function ok(value) { if (!settled) { settled = true; resolve(value); } }
+    function fail(error) { if (!settled) { settled = true; reject(error); } }
     var body = JSON.stringify({
       model: llmConfig.model || 'deepseek-chat',
       messages: messages,
@@ -598,20 +833,28 @@ function llmComplete(messages, options) {
       timeout: 25000
     }, function (r) {
       var chunks = [];
-      r.on('data', function (c) { chunks.push(c); });
+      var size = 0;
+      r.on('data', function (c) {
+        size += c.length;
+        if (size > 1024 * 1024) {
+          rq.destroy(new Error('大模型响应过大'));
+          return;
+        }
+        chunks.push(c);
+      });
       r.on('end', function () {
         var raw = Buffer.concat(chunks).toString('utf8');
         try {
           var j = JSON.parse(raw);
-          if (j.error) { reject(new Error(j.error.message || '大模型返回错误')); return; }
+          if (j.error) { fail(new Error(j.error.message || '大模型返回错误')); return; }
           var t = j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-          if (!t) { reject(new Error('大模型返回为空')); return; }
-          resolve(String(t).trim());
-        } catch (e) { reject(new Error('大模型返回格式不对')); }
+          if (!t) { fail(new Error('大模型返回为空')); return; }
+          ok(String(t).trim());
+        } catch (e) { fail(new Error('大模型返回格式不对')); }
       });
     });
-    rq.on('error', function (e) { reject(e); });
-    rq.on('timeout', function () { rq.destroy(); reject(new Error('大模型超时')); });
+    rq.on('error', fail);
+    rq.on('timeout', function () { rq.destroy(); fail(new Error('大模型超时')); });
     rq.write(body); rq.end();
   });
 }
@@ -632,8 +875,46 @@ function parsePlanJson(raw) {
   return JSON.parse(text);
 }
 
+function sanitizeAgentContext(input) {
+  input = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  var medication = input.medication && typeof input.medication === 'object' ? input.medication : {};
+  var care = input.care && typeof input.care === 'object' ? input.care : {};
+  var contacts = Array.isArray(input.contacts) ? input.contacts : [];
+  var facts = Array.isArray(input.memoryFacts) ? input.memoryFacts : [];
+  var turns = Array.isArray(input.recentTurns) ? input.recentTurns : [];
+  return {
+    privacyMinimized: true,
+    elderName: String(input.elderName || '老人').slice(0, 30),
+    city: String(input.city || '').slice(0, 30),
+    medication: {
+      total: Math.max(0, Math.min(100, Number(medication.total) || 0)),
+      done: Math.max(0, Math.min(100, Number(medication.done) || 0)),
+      names: (Array.isArray(medication.names) ? medication.names : []).slice(0, 4)
+        .map(function (name) { return String(name || '').slice(0, 40); })
+        .filter(Boolean)
+    },
+    care: {
+      inactiveHours: Math.max(0, Number(care.inactiveHours) || 0),
+      inactiveLimit: Math.max(0, Number(care.inactiveLimit) || 0),
+      inactiveAlert: !!care.inactiveAlert
+    },
+    contacts: contacts.slice(0, 4).map(function (contact) {
+      return { name: String((contact && contact.name) || '').slice(0, 30) };
+    }).filter(function (contact) { return !!contact.name; }),
+    memoryFacts: facts.slice(0, 3).map(function (fact) {
+      return String(fact || '').slice(0, 120);
+    }).filter(Boolean),
+    recentTurns: turns.slice(0, 2).map(function (turn) {
+      return {
+        user: String((turn && turn.user) || '').slice(0, 120),
+        assistant: String((turn && turn.assistant) || '').slice(0, 120)
+      };
+    })
+  };
+}
+
 function llmPlan(text, context) {
-  var contextText = JSON.stringify(context || {}, null, 0).slice(0, 5000);
+  var contextText = JSON.stringify(sanitizeAgentContext(context), null, 0).slice(0, 5000);
   return llmComplete([
     { role: 'system', content: AGENT_PLANNER_SYSTEM },
     {
@@ -663,14 +944,26 @@ try {
 
 function httpsGetJson(url) {
   return new Promise(function (resolve, reject) {
-    https.get(url, function (r) {
+    var request = https.get(url, function (r) {
       var c = [];
-      r.on('data', function (x) { c.push(x); });
+      var size = 0;
+      r.on('data', function (x) {
+        size += x.length;
+        if (size > 2 * 1024 * 1024) {
+          request.destroy(new Error('地图接口响应过大'));
+          return;
+        }
+        c.push(x);
+      });
       r.on('end', function () {
         var raw = Buffer.concat(c).toString('utf8');
         try { resolve(JSON.parse(raw)); } catch (e) { reject(new Error('地图接口返回格式不对')); }
       });
-    }).on('error', reject);
+    });
+    request.setTimeout(15000, function () {
+      request.destroy(new Error('地图接口超时'));
+    });
+    request.on('error', reject);
   });
 }
 
@@ -735,6 +1028,112 @@ function sendJson(res, code, obj) {
   res.end(body);
 }
 
+function setSecurityHeaders(req, res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=(self)');
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "connect-src 'self' https: wss: http:",
+    "media-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'"
+  ].join('; '));
+  if (req.socket && req.socket.encrypted) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+}
+
+var RATE_LIMITS = Object.create(null);
+function allowRequest(req, bucket, max, windowMs) {
+  var ip = String((req.socket && req.socket.remoteAddress) || 'unknown');
+  var key = bucket + ':' + ip;
+  var now = Date.now();
+  var item = RATE_LIMITS[key];
+  if (!item || now - item.startedAt >= windowMs) {
+    RATE_LIMITS[key] = { startedAt: now, count: 1 };
+    return true;
+  }
+  item.count++;
+  return item.count <= max;
+}
+
+var rateLimitCleanupTimer = setInterval(function () {
+  var cutoff = Date.now() - 10 * 60 * 1000;
+  Object.keys(RATE_LIMITS).forEach(function (key) {
+    if (RATE_LIMITS[key].startedAt < cutoff) delete RATE_LIMITS[key];
+  });
+}, 5 * 60 * 1000);
+if (rateLimitCleanupTimer && rateLimitCleanupTimer.unref) rateLimitCleanupTimer.unref();
+
+/*
+ * 读取有上限的请求体。超限后继续丢弃数据但不再累积到内存，
+ * 并且只返回一次 413，避免慢速大请求拖垮同步服务。
+ */
+function readLimitedBody(req, res, limit, onDone) {
+  var chunks = [];
+  var size = 0;
+  var tooLarge = false;
+  var finished = false;
+  req.on('data', function (chunk) {
+    if (tooLarge || finished) return;
+    size += chunk.length;
+    if (size > limit) {
+      tooLarge = true;
+      chunks = [];
+      res.setHeader('Connection', 'close');
+      sendJson(res, 413, { ok: false, error: '请求内容过大' });
+      res.on('finish', function () {
+        if (!req.destroyed) req.destroy();
+      });
+      return;
+    }
+    chunks.push(chunk);
+  });
+  req.on('end', function () {
+    if (tooLarge || finished) return;
+    finished = true;
+    onDone(null, Buffer.concat(chunks));
+  });
+  req.on('error', function (err) {
+    if (tooLarge || finished) return;
+    finished = true;
+    sendJson(res, 400, { ok: false, error: err.message || '读取请求失败' });
+  });
+}
+
+function readJsonBody(req, res, limit, onDone) {
+  readLimitedBody(req, res, limit, function (err, buffer) {
+    if (err) return;
+    var obj;
+    try {
+      obj = JSON.parse(buffer.toString('utf8'));
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: 'JSON格式错误' });
+      return;
+    }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      sendJson(res, 400, { ok: false, error: 'JSON内容必须是对象' });
+      return;
+    }
+    onDone(obj);
+  });
+}
+
+function normalizeIds(value, max) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, max || 30).map(function (id) {
+    return String(id || '').slice(0, 80);
+  }).filter(Boolean);
+}
+
 /* 本机在局域网里的 IPv4 地址 */
 function lanAddresses() {
   var out = [];
@@ -750,14 +1149,19 @@ function lanAddresses() {
 function serveStatic(req, res, urlPath) {
   var rel = urlPath === '/' ? '/index.html' : urlPath;
   // 只公开页面资源。密钥、证书、轨迹和日志不能被静态下载。
-  if (!/\.(?:html|css|js|svg|png|ico)$/i.test(rel)) {
+  if (!/\.(?:html|css|js|svg|png|ico|md)$/i.test(rel)) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('not found');
     return;
   }
   // 防止跳出目录
   var file = path.normalize(path.join(ROOT, rel));
-  if (file.indexOf(ROOT) !== 0) { res.writeHead(403); res.end('forbidden'); return; }
+  var relative = path.relative(ROOT, file);
+  if (relative.indexOf('..') === 0 || path.isAbsolute(relative)) {
+    res.writeHead(403);
+    res.end('forbidden');
+    return;
+  }
 
   fs.stat(file, function (err, st) {
     if (err || !st.isFile()) {
@@ -775,7 +1179,14 @@ function serveStatic(req, res, urlPath) {
 }
 
 function handle(req, res) {
-  var url = new URL(req.url, 'http://localhost');
+  setSecurityHeaders(req, res);
+  var url;
+  try {
+    url = new URL(req.url, 'http://localhost');
+  } catch (e) {
+    sendJson(res, 400, { ok: false, error: '请求地址格式不正确' });
+    return;
+  }
   var p = url.pathname;
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
@@ -787,14 +1198,8 @@ function handle(req, res) {
       sendJson(res, 429, { ok: false, error: '配对失败次数过多，请稍后再试' });
       return;
     }
-    var pairBody = '';
-    req.on('data', function (c) {
-      pairBody += c;
-      if (pairBody.length > 4096) req.destroy();
-    });
-    req.on('end', function () {
-      var code = '';
-      try { code = String(JSON.parse(pairBody).code || '').trim(); } catch (e) {}
+    readJsonBody(req, res, 4 * 1024, function (obj) {
+      var code = String(obj.code || '').trim();
       var a = Buffer.from(code);
       var b = Buffer.from(String(authState.pairCode));
       if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
@@ -843,27 +1248,23 @@ function handle(req, res) {
   /* ---------- 状态接口 ---------- */
   if (p === '/api/state') {
     if (req.method === 'POST') {
-      var chunks = [];
-      var size = 0;
-      req.on('data', function (c) {
-        size += c.length;
-        if (size > 512 * 1024) { req.destroy(); return; }   // 限制 512KB
-        chunks.push(c);
-      });
-      req.on('end', function () {
-        try {
-          var obj = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          obj.receivedAt = Date.now();
-          state = obj;
-          stateAt = Date.now();
-          saveElderState();
-          sendJson(res, 200, { ok: true, receivedAt: stateAt });
-          console.log('[' + new Date().toLocaleTimeString() + '] 收到老人端同步：' +
-            (obj.elderName || '老人') + '，用药 ' + (obj.medDone || 0) + '/' + (obj.medTotal || 0) +
-            '，预警 ' + ((obj.alerts || []).length) + ' 条');
-        } catch (e) {
-          sendJson(res, 400, { ok: false, error: '数据格式不对' });
+      readJsonBody(req, res, 512 * 1024, function (obj) {
+        var previousState = state;
+        var previousStateAt = stateAt;
+        obj.receivedAt = Date.now();
+        state = obj;
+        stateAt = Date.now();
+        if (!saveElderState()) {
+          state = previousState;
+          stateAt = previousStateAt;
+          sendJson(res, 503, { ok: false, error: '家庭服务暂时无法保存老人状态' });
+          return;
         }
+        var watchdogCreated = runCareWatchdog();
+        sendJson(res, 200, { ok: true, receivedAt: stateAt, watchdogCreated: watchdogCreated });
+        console.log('[' + new Date().toLocaleTimeString() + '] 收到老人端同步：用药 ' +
+          (obj.medDone || 0) + '/' + (obj.medTotal || 0) +
+          '，预警 ' + ((obj.alerts || []).length) + ' 条');
       });
       return;
     }
@@ -886,6 +1287,10 @@ function handle(req, res) {
       llmReady: !!llmConfig,
       agentReady: !!llmConfig,
       mapReady: !!mapConfig,
+      careWatchdogReady: true,
+      alertWebhookReady: !!ALERT_WEBHOOK,
+      escalationWebhookReady: !!ESCALATION_WEBHOOK,
+      retentionDays: RETENTION_DAYS,
       port: server.address() ? server.address().port : PORT,
       addresses: lanAddresses()
     });
@@ -905,26 +1310,23 @@ function handle(req, res) {
   /* ---------- Agent 远程规划：模型只产出计划，本地负责执行和安全门 ---------- */
   if (p === '/api/agent/plan') {
     if (req.method !== 'POST') { sendJson(res, 405, { error: '只支持POST' }); return; }
+    if (!allowRequest(req, 'agent-plan', 20, 60 * 1000)) {
+      sendJson(res, 429, { ok: false, error: '规划请求过于频繁，请稍后再试' });
+      return;
+    }
     if (!llmConfig) {
       sendJson(res, 503, { ok: false, error: '未配置大模型，已自动使用本地 Agent 规划' });
       return;
     }
-    var planBody = '';
-    req.on('data', function (c) {
-      planBody += c;
-      if (planBody.length > 64 * 1024) req.destroy();
-    });
-    req.on('end', function () {
-      var obj = {};
-      try { obj = JSON.parse(planBody); } catch (e) {}
+    readJsonBody(req, res, 64 * 1024, function (obj) {
       var text = String(obj.text || '').trim().slice(0, 500);
       if (!text) { sendJson(res, 400, { ok: false, error: 'text不能为空' }); return; }
       var t0 = Date.now();
       llmPlan(text, obj.context || {}).then(function (plan) {
         plan.elapsedMs = Date.now() - t0;
         sendJson(res, 200, { ok: true, plan: plan });
-        console.log('[' + new Date().toLocaleTimeString() + '] Agent 规划：' + plan.goal +
-          '（' + plan.steps.length + ' 步，' + plan.risk + '）');
+        console.log('[' + new Date().toLocaleTimeString() + '] Agent 规划完成：' +
+          plan.steps.length + ' 步，' + plan.risk);
       }).catch(function (e) {
         sendJson(res, 200, { ok: false, error: e.message });
         console.log('[' + new Date().toLocaleTimeString() + '] Agent 规划失败：' + e.message);
@@ -936,28 +1338,22 @@ function handle(req, res) {
   /* ---------- Agent 运行轨迹：老人端送上来，家人端/评委读走 ---------- */
   if (p === '/api/trace') {
     if (req.method === 'POST') {
-      var tb = '', tsize = 0;
-      req.on('data', function (c) {
-        tsize += c.length;
-        if (tsize > 256 * 1024) { req.destroy(); return; }
-        tb += c;
-      });
-      req.on('end', function () {
-        try {
-          var o = JSON.parse(tb);
-          if (!o || !o.id) { sendJson(res, 400, { ok: false, error: '缺少轨迹内容' }); return; }
-          traces.unshift(o);
-          if (traces.length > 200) traces.length = 200;
-          saveTraces();
-          var intent = '';
-          (o.steps || []).forEach(function (s) { if (s.name === '理解' && !intent) intent = s.note; });
-          console.log('[' + new Date().toLocaleTimeString() + '] Agent 轨迹：' +
-            (o.heard ? '「' + o.heard + '」→ ' : '') + (intent || '-') +
-            '（' + (o.ms || 0) + 'ms）');
-          sendJson(res, 200, { ok: true, count: traces.length });
-        } catch (e) {
-          sendJson(res, 400, { ok: false, error: '数据格式不对' });
+      readJsonBody(req, res, 256 * 1024, function (o) {
+        if (!o.id) { sendJson(res, 400, { ok: false, error: '缺少轨迹内容' }); return; }
+        var previousTraces = traces.slice();
+        traces.unshift(o);
+        if (traces.length > 200) traces.length = 200;
+        if (!saveTraces()) {
+          traces = previousTraces;
+          sendJson(res, 503, { ok: false, error: '家庭服务暂时无法保存 Agent 轨迹' });
+          return;
         }
+        var intent = '';
+        (o.steps || []).forEach(function (s) { if (s.name === '理解' && !intent) intent = s.note; });
+        console.log('[' + new Date().toLocaleTimeString() + '] Agent 轨迹：' +
+          (VERBOSE_LOGS && o.heard ? '「' + o.heard + '」→ ' : '') + (intent || '-') +
+          '（' + (o.ms || 0) + 'ms）');
+        sendJson(res, 200, { ok: true, count: traces.length });
       });
       return;
     }
@@ -968,21 +1364,19 @@ function handle(req, res) {
   /* ---------- 语音识别（前端传 PCM 二进制，可选 ?accent=方言） ---------- */
   if (p === '/api/asr') {
     if (req.method !== 'POST') { sendJson(res, 405, { error: '只支持POST' }); return; }
+    if (!allowRequest(req, 'asr', 30, 60 * 1000)) {
+      sendJson(res, 429, { ok: false, error: '语音识别请求过于频繁，请稍后再试' });
+      return;
+    }
     if (!voiceConfig) { sendJson(res, 503, { ok: false, error: '语音服务未配置密钥' }); return; }
     var accent = url.searchParams.get('accent') || 'mandarin';
-    var asrChunks = [];
-    var asrSize = 0;
-    req.on('data', function (c) {
-      asrSize += c.length;
-      if (asrSize > 10 * 1024 * 1024) { req.destroy(); return; }
-      asrChunks.push(c);
-    });
-    req.on('end', function () {
-      var pcm = Buffer.concat(asrChunks);
+    readLimitedBody(req, res, 10 * 1024 * 1024, function (err, pcm) {
+      if (err) return;
       if (pcm.length < 6400) { sendJson(res, 400, { ok: false, error: '音频太短' }); return; }
       xfyunIat(pcm, accent).then(function (text) {
         sendJson(res, 200, { ok: true, text: text });
-        console.log('[' + new Date().toLocaleTimeString() + '] 语音识别（' + accent + '）：' + text);
+        console.log('[' + new Date().toLocaleTimeString() + '] 语音识别完成（' + accent +
+          '，' + text.length + ' 字）');
       }).catch(function (e) {
         sendJson(res, 500, { ok: false, error: e.message });
         console.log('[' + new Date().toLocaleTimeString() + '] 语音识别失败：' + e.message);
@@ -994,33 +1388,30 @@ function handle(req, res) {
   /* ---------- 语音合成（返回 MP3） ---------- */
   if (p === '/api/tts') {
     if (req.method !== 'POST') { sendJson(res, 405, { error: '只支持POST' }); return; }
+    if (!allowRequest(req, 'tts', 40, 60 * 1000)) {
+      sendJson(res, 429, { ok: false, error: '语音播报请求过于频繁，请稍后再试' });
+      return;
+    }
     if (!voiceConfig) { sendJson(res, 503, { ok: false, error: '语音服务未配置密钥' }); return; }
-    var ttsBody = '';
-    req.on('data', function (c) { ttsBody += c; });
-    req.on('end', function () {
-      try {
-        var obj = JSON.parse(ttsBody);
-        var text = (obj.text || '').trim();
-        var rate = obj.rate || 0.85;
-        // 前端 rate 0.6~1.3 映射到讯飞 speed 0~100
-        var xfSpeed = Math.round(((rate - 0.6) / 0.7) * 100);
-        xfSpeed = Math.max(0, Math.min(100, xfSpeed));
-        if (!text) { sendJson(res, 400, { error: 'text不能为空' }); return; }
-        if (text.length > 2000) { sendJson(res, 400, { error: '文字太长（上限2000字）' }); return; }
-        xfyunTts(text, xfSpeed, obj.vcn).then(function (audioBuf) {
-          res.writeHead(200, {
-            'Content-Type': 'audio/mpeg',
-            'Content-Length': audioBuf.length,
-            'Cache-Control': 'no-store'
-          });
-          res.end(audioBuf);
-        }).catch(function (e) {
-          sendJson(res, 500, { ok: false, error: e.message });
-          console.log('[' + new Date().toLocaleTimeString() + '] 语音合成失败：' + e.message);
+    readJsonBody(req, res, 32 * 1024, function (obj) {
+      var text = String(obj.text || '').trim();
+      var rate = Number(obj.rate) || 0.85;
+      // 前端 rate 0.6~1.3 映射到讯飞 speed 0~100
+      var xfSpeed = Math.round(((rate - 0.6) / 0.7) * 100);
+      xfSpeed = Math.max(0, Math.min(100, xfSpeed));
+      if (!text) { sendJson(res, 400, { error: 'text不能为空' }); return; }
+      if (text.length > 2000) { sendJson(res, 400, { error: '文字太长（上限2000字）' }); return; }
+      xfyunTts(text, xfSpeed, String(obj.vcn || '').slice(0, 40)).then(function (audioBuf) {
+        res.writeHead(200, {
+          'Content-Type': 'audio/mpeg',
+          'Content-Length': audioBuf.length,
+          'Cache-Control': 'no-store'
         });
-      } catch (e) {
-        sendJson(res, 400, { error: 'JSON格式错误' });
-      }
+        res.end(audioBuf);
+      }).catch(function (e) {
+        sendJson(res, 500, { ok: false, error: e.message });
+        console.log('[' + new Date().toLocaleTimeString() + '] 语音合成失败：' + e.message);
+      });
     });
     return;
   }
@@ -1028,15 +1419,18 @@ function handle(req, res) {
   /* ---------- 大模型兜底 ---------- */
   if (p === '/api/chat') {
     if (req.method !== 'POST') { sendJson(res, 405, { error: '只支持POST' }); return; }
-    var chatBody = '';
-    req.on('data', function (c) { chatBody += c; });
-    req.on('end', function () {
-      var txt = '';
-      try { txt = (JSON.parse(chatBody).text || '').trim(); } catch (e) {}
+    if (!allowRequest(req, 'chat', 30, 60 * 1000)) {
+      sendJson(res, 429, { ok: false, error: '对话请求过于频繁，请稍后再试' });
+      return;
+    }
+    readJsonBody(req, res, 16 * 1024, function (obj) {
+      var txt = String(obj.text || '').trim();
       if (!txt) { sendJson(res, 400, { ok: false, error: 'text不能为空' }); return; }
+      txt = txt.slice(0, 500);
       llmChat(txt).then(function (answer) {
         sendJson(res, 200, { ok: true, text: answer });
-        console.log('[' + new Date().toLocaleTimeString() + '] 大模型：' + txt + ' → ' + answer);
+        console.log('[' + new Date().toLocaleTimeString() + '] 大模型完成（输入 ' +
+          txt.length + ' 字，输出 ' + answer.length + ' 字）');
       }).catch(function (e) {
         sendJson(res, 200, { ok: false, error: e.message });
       });
@@ -1047,12 +1441,12 @@ function handle(req, res) {
   /* ---------- 导航：搜地点 + 规划路线 ---------- */
   if (p === '/api/nav') {
     if (req.method !== 'POST') { sendJson(res, 405, { error: '只支持POST' }); return; }
+    if (!allowRequest(req, 'nav', 30, 60 * 1000)) {
+      sendJson(res, 429, { ok: false, error: '导航请求过于频繁，请稍后再试' });
+      return;
+    }
     if (!mapConfig) { sendJson(res, 200, { ok: false, error: '还没有配置地图密钥' }); return; }
-    var navBody = '';
-    req.on('data', function (c) { navBody += c; });
-    req.on('end', function () {
-      var o = {};
-      try { o = JSON.parse(navBody); } catch (e) {}
+    readJsonBody(req, res, 16 * 1024, function (o) {
       var kw = String(o.text || '').trim();
       var city = String(o.city || '').trim();
       var from = o.from;
@@ -1084,11 +1478,7 @@ function handle(req, res) {
   /* ---------- 家人留言：家人写，老人端取 ---------- */
   if (p === '/api/family/msg') {
     if (req.method === 'POST') {
-      var mb = '';
-      req.on('data', function (c) { mb += c; });
-      req.on('end', function () {
-        var o = {};
-        try { o = JSON.parse(mb); } catch (e) {}
+      readJsonBody(req, res, 16 * 1024, function (o) {
         var txt = String(o.text || '').trim();
         if (!txt) { sendJson(res, 400, { ok: false, error: '内容不能为空' }); return; }
         var m = {
@@ -1097,10 +1487,15 @@ function handle(req, res) {
           at: o.at ? Number(o.at) : 0,
           createdAt: Date.now()
         };
+        var previousMessages = familyMsgs.slice();
         familyMsgs.push(m);
         if (familyMsgs.length > 50) familyMsgs.shift();
-        saveFamilyMessages();
-        console.log('[' + new Date().toLocaleTimeString() + '] 家人留言：' + m.text);
+        if (!saveFamilyMessages()) {
+          familyMsgs = previousMessages;
+          sendJson(res, 503, { ok: false, error: '家庭服务暂时无法保存留言' });
+          return;
+        }
+        console.log('[' + new Date().toLocaleTimeString() + '] 家人留言已保存（' + m.id + '）');
         sendJson(res, 200, { ok: true, id: m.id });
       });
       return;
@@ -1110,14 +1505,15 @@ function handle(req, res) {
   }
 
   if (p === '/api/family/msg/ack') {
-    var ab = '';
-    req.on('data', function (c) { ab += c; });
-    req.on('end', function () {
-      var o = {};
-      try { o = JSON.parse(ab); } catch (e) {}
-      var ids = o.ids || [];
+    readJsonBody(req, res, 16 * 1024, function (o) {
+      var ids = normalizeIds(o.ids, 50);
+      var previous = familyMsgs.slice();
       familyMsgs = familyMsgs.filter(function (m) { return ids.indexOf(m.id) < 0; });
-      saveFamilyMessages();
+      if (!saveFamilyMessages()) {
+        familyMsgs = previous;
+        sendJson(res, 503, { ok: false, error: '家庭服务暂时无法保存确认状态' });
+        return;
+      }
       sendJson(res, 200, { ok: true });
     });
     return;
@@ -1125,6 +1521,7 @@ function handle(req, res) {
 
   /* ---------- 老人 → 家人：协同事件通道 ---------- */
   if (p === '/api/family/events' && req.method === 'GET') {
+    runCareWatchdog();
     escalateOverdueNotices();
     var eventList = elderNotices.slice().sort(function (a, b) {
       return (b.at || 0) - (a.at || 0);
@@ -1135,17 +1532,17 @@ function handle(req, res) {
 
   if (p === '/api/family/events/update') {
     if (req.method !== 'POST') { sendJson(res, 405, { error: '只支持POST' }); return; }
-    var eb = '';
-    req.on('data', function (c) { eb += c; });
-    req.on('end', function () {
-      var o = {};
-      try { o = JSON.parse(eb); } catch (e) {}
+    readJsonBody(req, res, 16 * 1024, function (o) {
       var action = String(o.action || '');
       if (['ack', 'contact', 'resolve'].indexOf(action) < 0) {
         sendJson(res, 400, { ok: false, error: 'action只能是ack、contact或resolve' });
         return;
       }
-      var changed = updateNoticeEvents(o.ids || [], action);
+      var changed = updateNoticeEvents(normalizeIds(o.ids, 50), action);
+      if (changed < 0) {
+        sendJson(res, 503, { ok: false, error: '家庭服务暂时无法保存事件状态' });
+        return;
+      }
       sendJson(res, 200, { ok: true, changed: changed, metrics: noticeMetrics() });
     });
     return;
@@ -1153,11 +1550,7 @@ function handle(req, res) {
 
   if (p === '/api/family/notify') {
     if (req.method === 'POST') {
-      var nb = '';
-      req.on('data', function (c) { nb += c; });
-      req.on('end', function () {
-        var o = {};
-        try { o = JSON.parse(nb); } catch (e) {}
+      readJsonBody(req, res, 64 * 1024, function (o) {
         var txt = String(o.text || '').trim();
         if (!txt) { sendJson(res, 400, { ok: false, error: '内容不能为空' }); return; }
         if (o.eventId) {
@@ -1179,16 +1572,23 @@ function handle(req, res) {
           createdAt: now,
           deadlineAt: now + (high ? HIGH_ESCALATE_MS : NORMAL_ESCALATE_MS)
         };
+        var previousNotices = elderNotices.slice();
         elderNotices.push(n);
         elderNotices.sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
         if (elderNotices.length > 100) elderNotices.length = 100;
-        saveNotices();
+        if (!saveNotices()) {
+          elderNotices = previousNotices;
+          sendJson(res, 503, { ok: false, error: '家庭服务暂时无法保存告警' });
+          return;
+        }
+        if (high) deliverAlertWebhook(n);
         console.log('[' + new Date().toLocaleTimeString() + '] 家人协同事件：' +
           kind + '（' + (high ? '高优先级' : '普通') + '）');
         sendJson(res, 200, { ok: true, id: n.id, event: n });
       });
       return;
     }
+    runCareWatchdog();
     escalateOverdueNotices();
     sendJson(res, 200, {
       ok: true,
@@ -1199,13 +1599,13 @@ function handle(req, res) {
   }
 
   if (p === '/api/family/notify/ack') {
-    var nk = '';
-    req.on('data', function (c) { nk += c; });
-    req.on('end', function () {
-      var o = {};
-      try { o = JSON.parse(nk); } catch (e) {}
-      var ids = o.ids || [];
+    readJsonBody(req, res, 16 * 1024, function (o) {
+      var ids = normalizeIds(o.ids, 50);
       var changed = updateNoticeEvents(ids, 'ack');
+      if (changed < 0) {
+        sendJson(res, 503, { ok: false, error: '家庭服务暂时无法保存确认状态' });
+        return;
+      }
       sendJson(res, 200, { ok: true, changed: changed, metrics: noticeMetrics() });
     });
     return;
@@ -1235,6 +1635,9 @@ if (useHttps) {
 } else {
   server = http.createServer(handle);
 }
+server.requestTimeout = 60 * 1000;
+server.headersTimeout = 15 * 1000;
+server.keepAliveTimeout = 5 * 1000;
 
 var triedPorts = [];
 
@@ -1269,8 +1672,10 @@ function onListening(port) {
     console.log('  如果换了网络、IP 地址变了，重新执行 node make-cert.js。');
     console.log('  ------------------------------------------');
   } else {
-    console.log('  提示：当前是 HTTP，麦克风、定位、NFC 会被浏览器禁用。');
-    console.log('  执行 node make-cert.js 生成证书，再重启即可启用 HTTPS。');
+    console.log('  提示：当前是 HTTP。本机 localhost 通常可直接使用麦克风；');
+    console.log('        手机通过局域网 HTTP 访问时，定位和 NFC 会被浏览器禁用，');
+    console.log('        语音可使用页面内的“录一段话”降级通道。');
+    console.log('        需要完整能力时请配置 HTTPS（见 README）。');
     console.log('  ------------------------------------------');
   }
   console.log('  按 Ctrl + C 停止');

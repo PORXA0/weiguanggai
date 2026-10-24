@@ -6,6 +6,7 @@ auth.json
 elder-state.json
 family-messages.json
 *.tmp
+*.bak
 *.pem
 *.crt
 *.key

@@ -339,7 +339,8 @@
     var m = j.metrics || {};
     metrics.textContent = '未关闭 ' + (m.unresolved || 0) + ' 条；已升级 ' +
       (m.escalated || 0) + ' 条；平均确认用时 ' +
-      (m.avgAckMs ? Math.max(1, Math.round(m.avgAckMs / 60000)) + ' 分钟' : '暂无');
+      (m.avgAckMs ? Math.max(1, Math.round(m.avgAckMs / 60000)) + ' 分钟' : '暂无') +
+      (m.failedDeliveries ? '；离线告警投递失败 ' + m.failedDeliveries + ' 条' : '');
     list.innerHTML = events.slice(0, 8).map(function (n) {
       return '<li><b>' + esc(n.text) + '</b>' +
         '<span>' + fmtTime(n.at) + ' · ' + esc(n.kind || '协同') + '</span>' +
@@ -590,12 +591,16 @@
     pollEvents();
   });
 
-  var sendBtn = document.querySelector('#btnSendMsg');
-  if (sendBtn) {
-    sendBtn.addEventListener('click', function () {
-      var inp = document.querySelector('#msgInput');
-      var t = (inp.value || '').trim();
-      if (!t) { alert('先写点什么'); return; }
+      var sendBtn = document.querySelector('#btnSendMsg');
+      if (sendBtn) {
+        sendBtn.addEventListener('click', function () {
+          var inp = document.querySelector('#msgInput');
+          var t = (inp.value || '').trim();
+      if (!t) {
+        document.querySelector('#sendState').textContent = '先写一句要提醒老人的话。';
+        inp.focus();
+        return;
+      }
       var tv = document.querySelector('#msgTime').value;
       var at = tv ? new Date(tv).getTime() : 0;
       sendBtn.disabled = true;
@@ -605,7 +610,10 @@
         body: JSON.stringify({ text: t, at: at })
       }).then(function (r) { if (r.status === 404) throw new Error('old-server'); return r.json(); }).then(function (j) {
         sendBtn.disabled = false;
-        if (!j || !j.ok) { alert('发送失败'); return; }
+        if (!j || !j.ok) {
+          document.querySelector('#sendState').textContent = '发送失败，请检查连接后再试。';
+          return;
+        }
         var list = readSent();
         list.unshift({ text: t, at: at, at2: Date.now() });
         writeSent(list); renderSent();
@@ -636,6 +644,5 @@
   timer = setInterval(load, 30000);
   load();
   pollNotice();
-  setInterval(pollNotice, 15000);
 
 })();

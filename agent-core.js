@@ -53,6 +53,11 @@
       description: '准备一个拨号按钮。必须由老人亲自点击后才会拨出。',
       risk: 'sensitive'
     },
+    prepare_emergency_call: {
+      label: '准备急救电话',
+      description: '为他人突发紧急情况准备 120 拨号按钮，仍由现场人员亲自点击。',
+      risk: 'safe'
+    },
     notify_family: {
       label: '通知家人',
       description: '把需要家人协同的事件推送到家人端。只发送必要信息。',
@@ -95,9 +100,50 @@
     }
   };
 
-  var URGENT_RE = /摔倒|摔了|跌倒|跌了|起不来|喘不上气|胸口疼|心慌得厉害|站不稳|叫不醒|出血不止|呼吸困难/;
+  /*
+   * 紧急识别刻意分成两层：
+   * 1. 求救、呼吸/胸痛、倒地、出血、走失等信号直接进入紧急计划；
+   * 2. 普通不适先进入“需确认”，避免把“我有点头晕”直接当成最高风险，
+   *    也避免在老人明确说“没有摔倒”时误触家人通知。
+   */
+  var STRONG_EMERGENCY_RE = new RegExp([
+    '救命', '救救我', '快来救我', '快不行了',
+    '呼吸困难', '喘不上气', '喘不过气', '憋气',
+    '胸口疼', '胸口痛', '胸口发闷', '心慌得厉害',
+    '叫不醒', '意识不清', '昏过去', '晕倒',
+    '摔倒了', '摔了一跤', '摔了', '跌倒', '跌了',
+    '起不来', '站不起来', '站不稳', '倒在地上', '爬不起来',
+    '出血不止', '流血不止', '大量出血', '头破血流',
+    '磕破头', '撞到头', '找不到回家的路', '迷路了', '走丢了'
+  ].join('|'));
   var DISCOMFORT_RE = /不舒服|难受|头晕|恶心|没力气|疼得厉害|发烧/;
+  var MILD_RE = /有点|稍微|一点点|轻微/;
+  var EXPLICIT_OPTOUT_RE = /(?:别|不要|不用|先别).{0,4}(?:通知|告诉).{0,4}(?:家人|子女|女儿|儿子|亲人)/;
   var HYPOTHETICAL_RE = /如果|假如|万一|要是/;
+  var NEGATED_EVENT_RE = /(?:没有|没|并未|并没有|不是|不曾|从没).{0,4}(?:真的)?(?:摔倒|摔了|跌倒|跌了|不舒服|难受|头晕|喘不上气|喘不过气|胸口疼|胸口痛|出血)/g;
+  var MEDIA_CONTEXT_RE = /(?:电视|电影|电视剧|视频|节目|广播)(?:里|上|中|里面)|新闻(?:里|上|中|里面)|(?:看|刷)到(?:一条|个)?(?:新闻|视频|消息)|听说|听(?:别人|邻居|朋友|新闻|广播).{0,4}说|别人告诉我|朋友圈|群里|网上说/;
+  var THIRD_PARTY_RE = /(?:我(?:的)?)?(?:老伴|爱人|儿子|女儿|儿媳|女婿|孙子|孙女|外孙|外孙女|父亲|母亲|爸爸|妈妈|邻居|朋友|亲戚|保姆|护工|路人|有人|他|她)(?:现在|刚刚|刚才|突然|好像|不小心)?[^，。！？,.!?]{0,10}(?:摔倒|摔了|跌倒|跌了|喘不上气|喘不过气|胸口疼|胸口痛|叫不醒|晕倒|出血|磕破头|迷路|走丢)/;
+  var REPORTED_SELF_RE = /我.{0,12}(?:说|告诉|讲|问).{0,6}我(?:现在|刚刚|刚才|突然|真的|不小心)?[^，。！？,.!?]{0,8}(?:摔倒|摔了|跌倒|喘不上气|喘不过气|胸口疼|胸口痛|叫不醒|晕倒|出血|磕破头)/;
+  var SELF_EMERGENCY_RE = /(?:^|[，。！？,.!?\s])我(?:现在|刚刚|刚才|突然|真的|不小心)?[^，。！？,.!?]{0,10}(?:摔倒|摔了|跌倒|跌了|站不起来|起不来|喘不上气|喘不过气|胸口疼|胸口痛|胸口发闷|叫不醒|晕倒|出血|磕破头)/;
+  var DIRECT_HELP_RE = /(?:^|[，。！？,.!?\s])(?:救命|救救我|快来救我|快不行了)/;
+  var NORMALIZE_PAIRS = [
+    ['睡倒', '摔倒'], ['衰倒', '摔倒'], ['甩倒', '摔倒'],
+    ['就命', '救命'], ['救名', '救命'],
+    ['揣不上气', '喘不上气'], ['喘不上去', '喘不上气'],
+    ['胸口发焖', '胸口发闷'], ['胸口发懑', '胸口发闷'],
+    ['啥子时候', '什么时候'], ['啥时候', '什么时候'], ['啥辰光', '什么时候'],
+    ['几时', '什么时候'], ['几时食', '什么时候吃'], ['多早晚', '什么时候'],
+    ['点样', '怎么样'], ['哪能', '怎么样'], ['咋样', '怎么样'], ['咋个', '怎么'],
+    ['啥子', '什么'], ['乜嘢', '什么'], ['啥', '什么'],
+    ['莫得', '没有'], ['呒没', '没有'], ['冇', '没有'], ['没得', '没有'],
+    ['莫要', '不要'], ['唔好', '不要'], ['勿要', '不要'],
+    ['晓得', '知道'], ['知唔知', '知道吗'],
+    ['食药', '吃药'], ['食饭', '吃饭'], ['而家', '现在'],
+    ['中咗奖', '中奖'], ['中左奖', '中奖'], ['中着奖', '中奖'],
+    ['畀钱', '给钱'], ['付钞票', '付钱'], ['钞票', '钱'],
+    ['边个', '谁'], ['边度', '哪里'], ['啥地方', '哪里'],
+    ['孃孃', '阿姨'], ['阿婆', '奶奶'], ['婶儿', '阿姨']
+  ];
   var FRAUD_RE = /骗子|诈骗|骗人|安全账户|转钱|转账|洗钱|验证码|中奖|退款|冒充|公检法|保密/;
   var MED_RE = /吃什么药|吃哪些药|吃药|吃过药|药吃了|药吃过|用药|药没吃|药物|降压药/;
   var WEATHER_RE = /天气|下雨|下雨吗|气温|冷不冷|热不热|穿什么/;
@@ -112,10 +158,58 @@
     return String(value == null ? '' : value).replace(/\s+/g, ' ').trim().slice(0, 500);
   }
 
+  function normalizeText(value) {
+    var text = cleanText(value);
+    NORMALIZE_PAIRS.forEach(function (pair) {
+      text = text.split(pair[0]).join(pair[1]);
+    });
+    return text;
+  }
+
+  function classifyEmergencySubject(text) {
+    if (MEDIA_CONTEXT_RE.test(text)) return 'media';
+    if (REPORTED_SELF_RE.test(text)) return 'self';
+    if (THIRD_PARTY_RE.test(text)) return 'third-party';
+    if (SELF_EMERGENCY_RE.test(text) || DIRECT_HELP_RE.test(text)) return 'self';
+    return 'self';
+  }
+
+  function assessUrgency(rawText) {
+    var text = normalizeText(rawText);
+    var hypothetical = HYPOTHETICAL_RE.test(text) && !/已经|刚刚|真的/.test(text);
+    if (hypothetical) {
+      return { level: 'normal', reason: 'hypothetical', subject: 'none', explicitOptOut: false };
+    }
+
+    var positiveText = text.replace(NEGATED_EVENT_RE, ' ');
+    var explicitOptOut = EXPLICIT_OPTOUT_RE.test(text);
+    var hasEmergencySignal = STRONG_EMERGENCY_RE.test(positiveText) || DISCOMFORT_RE.test(positiveText);
+    var subject = hasEmergencySignal ? classifyEmergencySubject(positiveText) : 'none';
+    if (subject === 'media') {
+      return { level: 'normal', reason: 'media-context', subject: subject, explicitOptOut: explicitOptOut };
+    }
+    if (subject === 'third-party') {
+      return { level: 'third-party', reason: 'third-party-emergency', subject: subject, explicitOptOut: explicitOptOut };
+    }
+    if (STRONG_EMERGENCY_RE.test(positiveText)) {
+      return { level: 'urgent', reason: 'emergency-signal', subject: subject, explicitOptOut: explicitOptOut };
+    }
+    if (DISCOMFORT_RE.test(positiveText)) {
+      if (explicitOptOut || MILD_RE.test(positiveText)) {
+        return { level: 'caution', reason: 'discomfort-needs-check', subject: subject, explicitOptOut: explicitOptOut };
+      }
+      return { level: 'urgent', reason: 'discomfort', subject: subject, explicitOptOut: explicitOptOut };
+    }
+    return {
+      level: 'normal',
+      reason: 'none',
+      subject: 'none',
+      explicitOptOut: explicitOptOut
+    };
+  }
+
   function hasUrgentSignal(text) {
-    if (!URGENT_RE.test(text) && !DISCOMFORT_RE.test(text)) return false;
-    if (HYPOTHETICAL_RE.test(text) && !/已经|现在|刚刚|真的/.test(text)) return false;
-    return true;
+    return assessUrgency(text).level === 'urgent';
   }
 
   function contactNameFrom(text) {
@@ -136,6 +230,11 @@
       risk: meta.risk || 'safe',
       requiresConfirmation: meta.risk === 'sensitive'
     };
+  }
+
+  function isToolName(name) {
+    return typeof name === 'string' &&
+      Object.prototype.hasOwnProperty.call(TOOLS, name);
   }
 
   function makePlan(goal, risk, steps, source, extra) {
@@ -175,7 +274,8 @@
   function planLocal(rawText, context) {
     var text = cleanText(rawText);
     var lower = text.toLowerCase();
-    var urgent = hasUrgentSignal(text);
+    var urgency = assessUrgency(text);
+    var urgent = urgency.level === 'urgent';
     var steps = [];
     var goal = '回应老人的请求';
     var risk = urgent ? 'urgent' : 'normal';
@@ -199,6 +299,43 @@
       });
     }
 
+    if (urgency.level === 'third-party') {
+      goal = '帮助老人处理他人的突发紧急情况';
+      addStep(steps, 'prepare_emergency_call', {}, '准备由现场人员亲自点击的急救电话');
+      if (/通知家人|联系家人|告诉家人/.test(text)) {
+        addStep(steps, 'notify_family', { kind: '他人紧急', reason: text }, '按老人明确要求同步家人');
+      }
+      if (!/还有呼吸|有呼吸|能叫醒|清醒|没有呼吸|叫不醒|没意识/.test(text)) {
+        addStep(steps, 'ask_user', {
+          question: '先确认对方现在有没有呼吸、能不能叫醒。如果叫不醒或呼吸困难，请马上拨打 120。',
+          slot: 'emergency-detail',
+          resumeTool: 'prepare_emergency_call'
+        }, '确认对方状态并提醒现场急救');
+      }
+      return makePlan(goal, 'caution', steps, 'local-safety', {
+        safetyNotes: [
+          '区分老人本人和他人发生的紧急情况',
+          '只准备急救拨号，不自动拨出',
+          '不把他人事故直接当成老人本人跌倒'
+        ]
+      });
+    }
+
+    if (urgency.level === 'caution' && DISCOMFORT_RE.test(text)) {
+      goal = '确认老人当前状态并给出安全的求助方式';
+      addStep(steps, 'get_care_status', {}, '先读取最近活动状态，避免继续执行无关任务');
+      addStep(steps, 'ask_user', {
+        question: '听起来你有点不舒服。现在坐着或躺着还稳吗？如果越来越难受，请马上告诉家里人。'
+      }, '确认不适程度；在老人明确要求前不自动通知家人');
+      return makePlan(goal, 'caution', steps, 'local-safety', {
+        safetyNotes: [
+          '识别到普通不适，先向老人确认',
+          '老人明确表示暂不通知家人时不自动推送',
+          '出现呼吸困难、胸痛或倒地等情况时仍按紧急场景处理'
+        ]
+      });
+    }
+
     if (FRAUD_RE.test(text) && !/为什么|什么是|怎么识别/.test(text)) {
       goal = '判断诈骗风险并给出行动建议';
       addStep(steps, 'check_fraud', { text: text }, '分析对方的话里有哪些高风险话术');
@@ -210,6 +347,27 @@
       return makePlan(goal, risk, steps, 'local', {
         safetyNotes: ['不索要验证码', '不建议转账', '不自动代替老人操作资金']
       });
+    }
+
+    /*
+     * “提醒我明天吃药”是创建日程，不是查询用药计划。
+     * 只有“今天吃什么药”“吃过药了吗”等问句才进入用药查询。
+     */
+    if (REMINDER_RE.test(text) && !WEATHER_RE.test(text) &&
+        !/吃过药|吃了没|吃没吃|是否吃|吃什么药|哪些药|药吃了没|药物状态/.test(text)) {
+      goal = '创建一条日程提醒';
+      if (!TIME_RE.test(text)) {
+        addStep(steps, 'ask_user', {
+          question: '好，我记着这件事。请告诉我具体是哪一天、几点提醒你。',
+          slot: 'time',
+          resumeTool: 'create_reminder'
+        }, '缺少具体时间，先向老人确认');
+        return makePlan(goal, risk, steps, 'local', {
+          safetyNotes: ['信息不足时不猜测时间']
+        });
+      }
+      addStep(steps, 'create_reminder', { text: text }, '解析时间并保存提醒');
+      return makePlan(goal, risk, steps, 'local');
     }
 
     if (MED_RE.test(text)) {
@@ -268,7 +426,9 @@
       goal = '创建一条日程提醒';
       if (!TIME_RE.test(text)) {
         addStep(steps, 'ask_user', {
-          question: '好，我记着这件事。请告诉我具体是哪一天、几点提醒你。'
+          question: '好，我记着这件事。请告诉我具体是哪一天、几点提醒你。',
+          slot: 'time',
+          resumeTool: 'create_reminder'
         }, '缺少具体时间，先向老人确认');
         return makePlan(goal, risk, steps, 'local', {
           safetyNotes: ['信息不足时不猜测时间']
@@ -324,7 +484,7 @@
     rawSteps.slice(0, 6).forEach(function (s) {
       if (!s) return;
       var name = typeof s === 'string' ? s : s.tool;
-      if (!TOOLS[name]) return;
+      if (!isToolName(name)) return;
       var args = (s && typeof s === 'object' && s.args && typeof s.args === 'object') ? s.args : {};
       var meta = TOOLS[name];
       steps.push({
@@ -386,9 +546,13 @@
     if (!step || !step.requiresConfirmation) return true;
     var text = cleanText(rawText);
     var tool = step.tool;
-    if (tool === 'prepare_call' || tool === 'get_location' || tool === 'ask_user') return true;
+    if (tool === 'prepare_call' || tool === 'ask_user') return true;
+    if (tool === 'get_location') {
+      return /定位|位置|在哪里|走失|迷路|找不到家|来接我|来找我/.test(text);
+    }
     if (plan && plan.risk === 'urgent' && tool === 'notify_family') return true;
     if (tool === 'notify_family') {
+      if (assessUrgency(text).explicitOptOut) return false;
       return /通知.*(?:家|子女|女儿|儿子|亲人)|告诉.*(?:家|子女|女儿|儿子|亲人)|联系.*(?:家|子女|女儿|儿子|亲人)|报平安|求助/.test(text);
     }
     if (tool === 'remember_fact') return /记住|以后都|以后要|别忘了我/.test(text);
@@ -397,20 +561,35 @@
   }
 
   function mergePendingInput(pending, rawText, now) {
-    var text = cleanText(rawText);
+    var text = normalizeText(rawText);
     now = Number(now) || Date.now();
     if (!pending || !pending.originalText) return { text: text, used: false, expired: false };
     if (now - (Number(pending.at) || 0) > 10 * 60 * 1000) {
       return { text: text, used: false, expired: true };
     }
-    if (pending.tool === 'create_reminder' && TIME_RE.test(text)) {
+    var slot = pending.slot || (pending.tool === 'create_reminder' ? 'time' : 'general');
+    var accepted = false;
+    if (slot === 'time') accepted = TIME_RE.test(text);
+    else if (slot === 'contact') {
+      accepted = /儿子|女儿|老伴|爱人|孙子|孙女|父亲|母亲|爸爸|妈妈|亲戚|朋友|电话|号码|手机|\d{6,}/.test(text);
+    } else if (slot === 'location') {
+      accepted = text.length <= 80 &&
+        /路|街|公园|医院|广场|小区|门口|附近|不知道|在家|这里|\d+/.test(text);
+    } else if (slot === 'confirmation') {
+      accepted = /^(?:要|好|行|可以|对|是|嗯|不用|不要|不|取消|算了)/.test(text);
+    } else if (slot === 'emergency-detail') {
+      accepted = text.length <= 100 &&
+        /呼吸|叫醒|清醒|意识|昏迷|疼|血|没事|还好|不知道/.test(text);
+    }
+    if (accepted) {
       return {
         text: cleanText(pending.originalText) + '，' + text,
         used: true,
-        expired: false
+        expired: false,
+        slot: slot
       };
     }
-    return { text: text, used: false, expired: false };
+    return { text: text, used: false, expired: false, slot: slot };
   }
 
   /* 独立安全 Agent：对完整计划给出审核结论，而不是只做字符串拦截。 */
@@ -429,7 +608,7 @@
       };
     }
     plan.steps.forEach(function (s) {
-      if (!TOOLS[s.tool]) findings.push('未知工具：' + s.tool);
+      if (!isToolName(s.tool)) findings.push('未知工具：' + s.tool);
       if (s.requiresConfirmation && !authorizeSensitive(s, rawText, plan)) {
         confirmations.push(TOOLS[s.tool].label);
       }
@@ -470,7 +649,9 @@
         strategy: 'ask-user',
         reason: '没有找到可用联系人，需要老人或家人补充号码',
         steps: [step('ask_user', {
-          question: '我没有找到可以联系的家人。请先让家人帮你保存一个电话号码。'
+          question: '我没有找到可以联系的家人。请告诉我是哪位家人，或者让家人先帮你保存一个电话号码。',
+          slot: 'contact',
+          resumeTool: 'find_contact'
         }, '补充缺失的联系人')]
       };
     }
@@ -479,7 +660,9 @@
         strategy: 'ask-user',
         reason: '提醒写入失败或时间不完整，需要重新确认时间',
         steps: [step('ask_user', {
-          question: '这件事还没有保存成功。请再告诉我一次具体是哪一天、几点。'
+          question: '这件事还没有保存成功。请再告诉我一次具体是哪一天、几点。',
+          slot: 'time',
+          resumeTool: 'create_reminder'
         }, '重新确认提醒时间')]
       };
     }
@@ -495,9 +678,13 @@
     }
     if (tool === 'get_location') {
       return {
-        strategy: 'continue',
-        reason: '定位不可用，继续使用已有活动和告警信息',
-        steps: []
+        strategy: 'ask-user',
+        reason: '定位不可用，需要老人说明当前位置或重新授权',
+        steps: [step('ask_user', {
+          question: '这次没有拿到位置。你知道自己现在在哪里吗？可以说附近的路名或店名。',
+          slot: 'location',
+          resumeTool: 'get_location'
+        }, '请老人补充当前位置')]
       };
     }
     return message ? {
@@ -556,6 +743,52 @@
     });
   }
 
+  /*
+   * 最终回答只使用真实执行结果。模型生成的 spoken 仅能用于纯闲聊，
+   * 不能覆盖工具失败，也不能声称一个没有执行成功的动作已经完成。
+   */
+  function composeGroundedAnswer(plan, results, rawText) {
+    plan = plan || {};
+    results = Array.isArray(results) ? results : [];
+    var asked = results.filter(function (item) { return item.result && item.result.askUser; })[0];
+    if (asked) return asked.result.text;
+    var cancelled = results.filter(function (item) { return item.result && item.result.cancelled; })[0];
+    if (cancelled) return cancelled.result.text;
+
+    var pureConversation = results.length > 0 && results.every(function (item) {
+      return item.result && item.result.ok && item.step && item.step.tool === 'converse';
+    });
+    if (plan.spoken && (results.length === 0 || pureConversation)) return plan.spoken;
+
+    if (plan.risk === 'urgent') {
+      var notified = results.some(function (item) {
+        return item.step && item.step.tool === 'notify_family' && item.result && item.result.ok;
+      });
+      var canCall = results.some(function (item) {
+        return item.result && item.result.action && item.result.action.type === 'call';
+      });
+      return '你先别着急。' +
+        (hasUrgentSignal(rawText) ? '如果摔倒了先别硬撑着起来。' : '') +
+        (notified ? '我已经把求助信息发给家人。' : '家人通知还没有成功。') +
+        (canCall ? '你可以点下面的按钮直接打电话。' : '通讯录里还没有可用号码，请让家人帮你存一个。');
+    }
+
+    var failures = results.filter(function (item) {
+      return item.result && item.result.ok === false && !item.result.askUser && !item.result.cancelled;
+    });
+    var seen = {};
+    var parts = [];
+    results.forEach(function (item) {
+      var text = String((item.result && item.result.text) || '').trim();
+      if (text && !seen[text]) {
+        seen[text] = true;
+        parts.push(text);
+      }
+    });
+    if (!parts.length) return '我没有得到可用的执行结果，这件事还没有完成。';
+    return (failures.length ? '这件事没有全部完成。' : '') + parts.join(' ');
+  }
+
   function toolCatalog() {
     return Object.keys(TOOLS).map(function (name) {
       return {
@@ -581,7 +814,10 @@
     buildProactiveEscalation: buildProactiveEscalation,
     shouldUseRemote: shouldUseRemote,
     hasUrgentSignal: hasUrgentSignal,
+    assessUrgency: assessUrgency,
     contactNameFrom: contactNameFrom,
-    cleanText: cleanText
+    cleanText: cleanText,
+    normalizeText: normalizeText,
+    composeGroundedAnswer: composeGroundedAnswer
   };
 });

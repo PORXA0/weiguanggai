@@ -1182,6 +1182,13 @@ body{
   background:rgba(20,32,28,.92); color:#fff;
   font-size:1rem; font-weight:650; text-align:center;
   animation:viewIn .22s ease both;
+  display:flex; align-items:center; gap:14px;
+}
+.toast[hidden]{ display:none; }
+.toast-action{
+  flex:none; padding:6px 14px; border-radius:999px;
+  border:1px solid rgba(255,255,255,.6); color:#fff;
+  background:rgba(255,255,255,.12); font-weight:750;
 }
 
 
@@ -1357,6 +1364,11 @@ body{
 }
 .agent-risk.urgent{ background:#FCE8E2; color:#A83D27; }
 .agent-risk.caution{ background:#FFF1D8; color:#8C6117; }
+.agent-cancel{
+  margin-left:8px; padding:4px 11px; border-radius:999px;
+  border:1px solid #D8B5A9; background:#FFF8F4; color:#8E3524;
+  font-size:.76rem; font-weight:750;
+}
 .agent-plan-meta{ margin:8px 0 10px; color:var(--ink-3); font-size:.78rem; }
 .agent-live-steps{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:7px; }
 .agent-live-steps li{
@@ -1612,4 +1624,15 @@ body{
 .empty,.drop{
   border-color:var(--line-2);
   background:linear-gradient(180deg,#FFFDF9,#FFF9F0);
+}
+
+/* 键盘和读屏用户必须能看见当前焦点。 */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible{
+  outline:3px solid #175C4B !important;
+  outline-offset:3px !important;
+  box-shadow:0 0 0 6px rgba(23,92,75,.16) !important;
 }

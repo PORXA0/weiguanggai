@@ -7,7 +7,7 @@
      · 诈骗话术判断（本地规则引擎，可解释）
      · 用药提醒（定时 + 打卡 + 记录）
      · 一键拨号（tel:）
-     · 数据全部保存在本机 localStorage
+     · 数据默认保存在 localStorage；家庭同步和在线能力按需传输必要信息
 
    已知边界：
      · 语音唤醒仍用浏览器原生识别，需要 Chrome/Edge 支持
@@ -195,9 +195,23 @@
      1. 通用工具
      ========================================================== */
 
-  function toast(msg, ms) {
+  function toast(msg, ms, actionText, actionFn) {
     var el = $('#toast');
-    el.textContent = msg;
+    el.innerHTML = '';
+    var text = document.createElement('span');
+    text.textContent = String(msg);
+    el.appendChild(text);
+    if (actionText && typeof actionFn === 'function') {
+      var action = document.createElement('button');
+      action.type = 'button';
+      action.className = 'toast-action';
+      action.textContent = actionText;
+      action.addEventListener('click', function () {
+        el.hidden = true;
+        actionFn();
+      });
+      el.appendChild(action);
+    }
     el.hidden = false;
     clearTimeout(toast._t);
     toast._t = setTimeout(function () { el.hidden = true; }, ms || 2200);
@@ -355,6 +369,9 @@
   ];
 
   function normalize(text) {
+    if (window.WGAgent && window.WGAgent.normalizeText) {
+      return window.WGAgent.normalizeText(text);
+    }
     var out = String(text);
     NORMALIZE.forEach(function (pair) {
       out = out.split(pair[0]).join(pair[1]);
@@ -1012,88 +1029,8 @@
   /* ==========================================================
      5.9 我的安排：老人说一句，到点自动提醒
      ========================================================== */
-  var CN_DIGIT = { '零':0,'〇':0,'一':1,'两':2,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10 };
-
-  function cnNum(s) {
-    s = String(s || '').trim();
-    if (!s) return null;
-    if (/^[0-9]+$/.test(s)) return parseInt(s, 10);
-    var m = /^(.)?十(.)?$/.exec(s);
-    if (m) {
-      var tens = m[1] ? CN_DIGIT[m[1]] : 1;
-      var ones = m[2] ? CN_DIGIT[m[2]] : 0;
-      if (tens == null || ones == null) return null;
-      return tens * 10 + ones;
-    }
-    if (s.length === 1 && CN_DIGIT[s] != null) return CN_DIGIT[s];
-    return null;
-  }
-
   function parseWhen(text) {
-    var now = new Date();
-    var consumed = [], m, i;
-
-    if ((m = /([0-9]+|[一二两三四五六七八九十]+)\s*(?:分钟|分)\s*(?:以)?后/.exec(text))) {
-      i = cnNum(m[1]);
-      if (i != null) return { at: new Date(now.getTime() + i * 60000), matched: m[0], clock: true };
-    }
-    if ((m = /半\s*(?:个)?\s*(?:小时|钟头)\s*(?:以)?后/.exec(text))) {
-      return { at: new Date(now.getTime() + 30 * 60000), matched: m[0], clock: true };
-    }
-    if ((m = /([0-9]+|[一二两三四五六七八九十]+)\s*(?:个)?\s*(?:小时|钟头)\s*(?:以)?后/.exec(text))) {
-      i = cnNum(m[1]);
-      if (i != null) return { at: new Date(now.getTime() + i * 3600000), matched: m[0], clock: true };
-    }
-
-    var dayOffset = null;
-    if ((m = /大后天/.exec(text))) { dayOffset = 3; consumed.push(m[0]); }
-    else if ((m = /后天/.exec(text))) { dayOffset = 2; consumed.push(m[0]); }
-    else if ((m = /明天|明日|明儿/.exec(text))) { dayOffset = 1; consumed.push(m[0]); }
-    else if ((m = /今天|今日|今儿/.exec(text))) { dayOffset = 0; consumed.push(m[0]); }
-
-    var period = null;
-    if ((m = /早上|早晨|一大早|清晨/.exec(text))) { period = 'am'; consumed.push(m[0]); }
-    else if ((m = /上午/.exec(text))) { period = 'am'; consumed.push(m[0]); }
-    else if ((m = /中午/.exec(text))) { period = 'noon'; consumed.push(m[0]); }
-    else if ((m = /下午/.exec(text))) { period = 'pm'; consumed.push(m[0]); }
-    else if ((m = /傍晚/.exec(text))) { period = 'pm'; consumed.push(m[0]); }
-    else if ((m = /晚上|夜里|晚间/.exec(text))) { period = 'night'; consumed.push(m[0]); }
-
-    var hh = null, mm = 0, tMatch = '';
-    if ((m = /([0-9]{1,2})[:：]([0-9]{1,2})/.exec(text))) {
-      hh = parseInt(m[1], 10); mm = parseInt(m[2], 10); tMatch = m[0];
-    } else if ((m = /([0-9]{1,2}|[一二两三四五六七八九十]+)\s*点\s*(?:半|一刻|三刻|[0-9]{1,2}\s*分?|[一二两三四五六七八九十]+\s*分?)?/.exec(text))) {
-      hh = cnNum(m[1]);
-      tMatch = m[0];
-      if (m[0].indexOf('半') >= 0) mm = 30;
-      else if (m[0].indexOf('三刻') >= 0) mm = 45;
-      else if (m[0].indexOf('一刻') >= 0) mm = 15;
-      else {
-        var rest = m[0].replace(/^.*?点/, '').replace(/分/g, '').trim();
-        if (rest) { var mv = cnNum(rest); if (mv != null) mm = mv; }
-      }
-    }
-
-    if (hh == null && period == null) return null;
-    var hadClock = (hh != null);
-
-    if (hh == null) {
-      hh = period === 'am' ? 8 : (period === 'noon' ? 12 : (period === 'pm' ? 15 : 19));
-    } else {
-      if (period === 'pm' || period === 'night') { if (hh < 12) hh += 12; }
-      else if (period === 'noon') { if (hh < 12) hh += 12; }
-      else if (period === 'am' && hh === 12) hh = 0;
-    }
-    if (hh > 23) hh = hh % 24;
-    if (mm > 59) mm = 0;
-    if (tMatch) consumed.push(tMatch);
-
-    var d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (dayOffset != null) d.setDate(d.getDate() + dayOffset);
-    d.setHours(hh, mm, 0, 0);
-    if (dayOffset == null && d.getTime() < now.getTime() - 60000) d.setDate(d.getDate() + 1);
-
-    return { at: d, matched: consumed.join(''), clock: hadClock };
+    return window.WGTime ? window.WGTime.parseWhen(text, new Date()) : null;
   }
 
   var SCHEDULE_KW = ['提醒', '记得', '别忘', '安排', '约了', '日程', '记一下', '记下来'];
@@ -1127,6 +1064,21 @@
     var isQ = /(吗|嘛|么)\s*$/.test(text) || /是不是|对不对/.test(text);
     var when = parseWhen(text);
     if (!when) return null;
+    if (when.error) {
+      return {
+        needClarify: true,
+        text: when.error === 'missing-clock'
+          ? '日期我记住了，但还差一个具体时间。请说是上午几点还是晚上几点。'
+          : '这个时间我没听懂。请说一个清楚的日期和时间，例如明天下午三点。'
+      };
+    }
+    if (when.ambiguous) {
+      var hour12 = when.hour % 12 || 12;
+      return {
+        needClarify: true,
+        text: '我怕记错时间。你说的是上午' + hour12 + '点，还是晚上' + hour12 + '点？'
+      };
+    }
     if (!when.clock && !hasKw) return null;
     if (when.clock && isQ && !hasKw) return null;
     if (when.at.getTime() - Date.now() > 60 * 86400000) return null;
@@ -1641,7 +1593,7 @@
   }
 
   /* ==========================================================
-     6. 语音识别（录音上传到服务端，调百度短语音识别）
+     6. 语音识别（录音上传到服务端，调讯飞在线语音听写）
      ========================================================== */
 
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1825,7 +1777,15 @@
 
   var AGENT_LIVE = { plan: null, results: [] };
   var agentConfirmResolver = null;
+  var agentConfirmReturnFocus = null;
   var AGENT_MONITOR_TIMER = null;
+  var AGENT_RUN = {
+    seq: 0,
+    busy: false,
+    current: null,
+    queue: [],
+    cancelRequested: false
+  };
 
   function ensureAgentMonitor() {
     if (!D.agentMonitor || typeof D.agentMonitor !== 'object') {
@@ -1872,11 +1832,15 @@
     if (merged.expired) {
       D.agentMemory.pending = null;
       save();
+    } else if (!merged.used) {
+      // 新请求不像是在补充缺失信息时，结束上一轮追问，避免把无关对话拼进旧任务。
+      D.agentMemory.pending = null;
+      save();
     }
     return { text: merged.text, used: merged.used };
   }
 
-  function agentContext() {
+  function agentContext(requestText) {
     ensureAgentMemory();
     var medTotal = 0, medDone = 0;
     (D.meds || []).forEach(function (m) {
@@ -1886,13 +1850,17 @@
       });
     });
     var care = inactiveInfo();
+    var needsMedicationNames = /药|吃|服药/.test(String(requestText || ''));
     return {
       elderName: D.settings.elderName || '老人',
       city: D.settings.city || '',
+      privacyMinimized: true,
       medication: {
         total: medTotal,
         done: medDone,
-        names: (D.meds || []).slice(0, 6).map(function (m) { return m.name; })
+        names: needsMedicationNames
+          ? (D.meds || []).slice(0, 4).map(function (m) { return String(m.name || '').slice(0, 40); })
+          : []
       },
       care: {
         inactiveHours: Math.round((care.hours || 0) * 10) / 10,
@@ -1900,10 +1868,15 @@
         inactiveAlert: !!care.alert
       },
       contacts: (D.contacts || []).filter(function (c) { return c.phone; })
-        .slice(0, 6).map(function (c) { return { name: c.name }; }),
-      memoryFacts: D.agentMemory.facts.slice(0, 6).map(function (f) { return f.text; }),
-      recentTurns: D.agentMemory.turns.slice(0, 6).map(function (t) {
-        return { user: t.user, assistant: t.assistant };
+        .slice(0, 4).map(function (c) { return { name: String(c.name || '').slice(0, 30) }; }),
+      memoryFacts: D.agentMemory.facts.slice(0, 3).map(function (f) {
+        return String(f.text || '').slice(0, 120);
+      }),
+      recentTurns: D.agentMemory.turns.slice(0, 2).map(function (t) {
+        return {
+          user: String(t.user || '').slice(0, 120),
+          assistant: String(t.assistant || '').slice(0, 120)
+        };
       })
     };
   }
@@ -1954,7 +1927,7 @@
     return fetch('/api/agent/plan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text, context: agentContext() })
+      body: JSON.stringify({ text: text, context: agentContext(text) })
     }).then(function (r) { return r.json(); }).then(function (j) {
       if (!j || !j.ok || !j.plan) throw new Error((j && j.error) || '远程规划不可用');
       var normalized = window.WGAgent.normalizePlan(j.plan, text);
@@ -2079,6 +2052,10 @@
     var resolve = agentConfirmResolver;
     agentConfirmResolver = null;
     if (resolve) resolve(!!ok);
+    if (agentConfirmReturnFocus && agentConfirmReturnFocus.focus) {
+      try { agentConfirmReturnFocus.focus(); } catch (e) {}
+    }
+    agentConfirmReturnFocus = null;
   }
 
   function requestAgentConfirmation(step, plan, rawText) {
@@ -2090,7 +2067,12 @@
     if (!modal) return Promise.resolve(false);
     $('#agentConfirmTitle').textContent = copy.title;
     $('#agentConfirmText').textContent = copy.text;
+    agentConfirmReturnFocus = document.activeElement;
     modal.hidden = false;
+    setTimeout(function () {
+      var cancel = $('#btnAgentCancel');
+      if (cancel) cancel.focus();
+    }, 0);
     return new Promise(function (resolve) {
       agentConfirmResolver = resolve;
     });
@@ -2156,6 +2138,16 @@
           }
         : { ok: false, text: '我没有找到可以拨打的家人号码。' });
     }
+    if (tool === 'prepare_emergency_call') {
+      return Promise.resolve({
+        ok: true,
+        text: '我已经准备好急救电话。只有现场人员亲手点按钮才会拨出。',
+        action: {
+          type: 'call',
+          contact: { id: 'emergency-120', name: '急救中心', phone: '120' }
+        }
+      });
+    }
     if (tool === 'notify_family') {
       return agentNotifyFamily(args.reason || rawText, args.kind || '家人协同', args.eventId);
     }
@@ -2185,7 +2177,17 @@
         reminderText = reminderText.split(/(?:然后|再)/).pop().trim();
       }
       var planned = trySchedule(reminderText);
-      return Promise.resolve(planned
+      if (planned && planned.needClarify) {
+        step.args.slot = 'time';
+        step.args.resumeTool = 'create_reminder';
+        return Promise.resolve({
+          ok: false,
+          askUser: true,
+          stop: true,
+          text: planned.text
+        });
+      }
+      return Promise.resolve(planned && planned.plan
         ? { ok: true, text: planned.text, action: { type: 'reminder', event: planned.plan } }
         : { ok: false, text: '我没有听清具体时间。请说“明天早上八点提醒我去公园”这样的完整时间。' });
     }
@@ -2211,7 +2213,7 @@
   }
 
   function runAgentTask(text, forcedPlan) {
-    var localPlan = window.WGAgent.planLocal(text, agentContext());
+    var localPlan = window.WGAgent.planLocal(text, agentContext(text));
     var planPromise = forcedPlan
       ? Promise.resolve(forcedPlan)
       : (window.WGAgent.shouldUseRemote(text, localPlan)
@@ -2230,6 +2232,16 @@
           : (safety.decision === 'needs-confirmation'
             ? '需要老人确认：' + safety.confirmations.join('、')
             : '发现风险并要求重新校验'));
+      if (safety.decision === 'block') {
+        return {
+          plan: plan,
+          safety: safety,
+          results: [{
+            step: { tool: 'safety_review', purpose: '阻止未通过安全审核的计划' },
+            result: { ok: false, text: '安全门发现计划存在无法修复的风险，已经停止执行。' }
+          }]
+        };
+      }
       setAgentMonitorStatus(
         plan.risk === 'urgent' ? 'alert' : 'acting',
         plan.risk === 'urgent' ? '安全 Agent 正在处理高风险任务' : 'Agent 正在执行任务',
@@ -2242,6 +2254,11 @@
       var cursor = 0;
 
       function runNext() {
+        if (AGENT_RUN.cancelRequested) {
+          halted = true;
+          traceStep('安全检查', '已停止当前任务，准备处理新的请求');
+          return Promise.resolve();
+        }
         if (halted || cursor >= queue.length || cursor >= 12) return Promise.resolve();
         var index = cursor++;
         var step = queue[index];
@@ -2300,6 +2317,7 @@
               }
             }
             if (result.stop) halted = true;
+            if (AGENT_RUN.cancelRequested) halted = true;
             return result;
           });
         }).then(function () {
@@ -2314,35 +2332,7 @@
   }
 
   function composeAgentAnswer(run, rawText) {
-    var plan = run.plan;
-    var asked = run.results.filter(function (r) { return r.result.askUser; })[0];
-    if (asked) return asked.result.text;
-    var cancelled = run.results.filter(function (r) { return r.result.cancelled; })[0];
-    if (cancelled) return cancelled.result.text;
-    if (plan.spoken) return plan.spoken;
-    if (plan.risk === 'urgent') {
-      var notified = run.results.some(function (r) {
-        return r.step.tool === 'notify_family' && r.result.ok;
-      });
-      var canCall = run.results.some(function (r) {
-        return r.result.action && r.result.action.type === 'call';
-      });
-      return '你先别着急。' +
-        (hasUrgentSignalText(rawText) ? '如果摔倒了先别硬撑着起来。' : '') +
-        (notified ? '我已经把求助信息发给家人。' : '我正在准备联系家人。') +
-        (canCall ? '你可以点下面的按钮直接打电话。' : '通讯录里还没有可用号码，请让家人帮你存一个。');
-    }
-    var seen = {};
-    var parts = [];
-    run.results.forEach(function (r) {
-      var t = String(r.result.text || '').trim();
-      if (t && !seen[t]) { seen[t] = true; parts.push(t); }
-    });
-    return parts.join(' ') || '我处理完了，但没有得到可用的结果。';
-  }
-
-  function hasUrgentSignalText(text) {
-    return !!window.WGAgent && WGAgent.hasUrgentSignal(text);
+    return window.WGAgent.composeGroundedAnswer(run.plan, run.results, rawText);
   }
 
   function finishAgentAnswer(text, via, run, taskText, usedPending) {
@@ -2384,12 +2374,18 @@
     ensureAgentMemory();
     var asked = run.results.filter(function (r) { return r.result.askUser; })[0];
     if (asked) {
-      D.agentMemory.pending = {
+      var askedArgs = (asked.step && asked.step.args) || {};
+      var pendingSlot = askedArgs.slot || '';
+      var resumeTool = askedArgs.resumeTool ||
+        (/提醒|日程|安排/.test(taskText || text) ? 'create_reminder' : '');
+      D.agentMemory.pending = (pendingSlot || resumeTool) ? {
         at: Date.now(),
         originalText: taskText || text,
-        tool: /提醒|日程|安排/.test(taskText || text) ? 'create_reminder' : 'general',
+        tool: resumeTool || 'general',
+        slot: pendingSlot || (resumeTool === 'create_reminder' ? 'time' : 'general'),
+        resumeTool: resumeTool,
         question: asked.result.text
-      };
+      } : null;
       setAgentMonitorStatus('acting', 'Agent 正在等待你的回应', asked.result.text);
     } else if (usedPending) {
       D.agentMemory.pending = null;
@@ -2399,7 +2395,14 @@
       if (cancelledResult) {
         setAgentMonitorStatus('monitor', 'Agent 已按你的要求暂停', cancelledResult.result.text);
       } else if (run.plan.risk === 'urgent') {
-        setAgentMonitorStatus('alert', '高风险任务已完成协同', '已检查状态并处理家人通知与拨号准备。');
+        var urgentNotified = run.results.some(function (r) {
+          return r.step.tool === 'notify_family' && r.result.ok;
+        });
+        setAgentMonitorStatus(
+          'alert',
+          urgentNotified ? '高风险任务已通知家人' : '高风险任务尚未完成家人通知',
+          urgentNotified ? '已检查状态并留下人工拨号入口。' : '家人通知未成功，请立即使用电话或线下求助。'
+        );
       } else {
         setAgentMonitorStatus('monitor', 'Agent 正在继续观察家庭状态',
           '最近完成任务：' + (run.plan.goal || '老人的请求'));
@@ -2433,13 +2436,71 @@
 
     $('#btnSpeakAgain').hidden = false;
     $('#btnSpeakAgain').onclick = function () { speak(spoken); };
-    speak(spoken);
+    if (AGENT_RUN.cancelRequested) {
+      stopSpeaking();
+      setAgentMonitorStatus('monitor', '当前任务已停止', '可以继续说新的请求。');
+    } else {
+      speak(spoken);
+    }
   }
 
-  function answer(text, via, forcedPlan, internal) {
-    if (!internal) markActive();
+  function agentCancelVisible(visible) {
+    var button = $('#btnCancelAgent');
+    if (button) button.hidden = !visible;
+  }
+
+  function completeAgentRequest() {
+    AGENT_RUN.cancelRequested = false;
+    AGENT_RUN.current = null;
+    agentCancelVisible(false);
+    if (!AGENT_RUN.queue.length) {
+      AGENT_RUN.busy = false;
+      return;
+    }
+    var next = AGENT_RUN.queue.shift();
+    setTimeout(function () { startAgentRequest(next); }, 0);
+  }
+
+  function queueAgentRequest(request) {
+    if (!request.urgent && AGENT_RUN.queue.length >= 4) {
+      toast('还有几件事没做完，请稍等一下', 3200);
+      return;
+    }
+    if (request.urgent) {
+      AGENT_RUN.queue.unshift(request);
+      AGENT_RUN.cancelRequested = true;
+      var modal = $('#agentConfirmModal');
+      if (modal && !modal.hidden) closeAgentConfirm(false);
+      setAgentMonitorStatus('alert', '收到新的紧急请求', '正在停止旧任务并优先处理紧急求助。');
+    } else {
+      AGENT_RUN.queue.push(request);
+      setAgentMonitorStatus('acting', 'Agent 正在处理上一件事',
+        '新请求已排队，当前任务完成后会继续处理。');
+    }
+    toast(request.urgent ? '紧急请求已优先排队' : '这件事已排队，请稍等', 2600);
+  }
+
+  function startAgentRequest(request) {
+    AGENT_RUN.busy = true;
+    AGENT_RUN.current = request;
+    AGENT_RUN.cancelRequested = false;
+    agentCancelVisible(true);
+
+    var text = request.text;
+    var via = request.via;
+    var forcedPlan = request.forcedPlan;
+    var internal = request.internal;
     traceStart(via || 'voice', text);
-    var pendingInput = internal ? { text: text, used: false } : resolvePendingAgentInput(text);
+    if (!internal && (request.urgent || !request.pendingAtEnqueue)) {
+      ensureAgentMemory();
+      if (D.agentMemory.pending) {
+        D.agentMemory.pending = null;
+        save();
+      }
+    }
+    var pendingInput = internal || request.urgent || !request.pendingAtEnqueue
+      ? { text: request.normalizedText, used: false }
+      : resolvePendingAgentInput(request.normalizedText);
     var taskText = pendingInput.text;
     var box = $('#talkAnswer');
     box.hidden = false;
@@ -2451,10 +2512,11 @@
       traceEnd(fallback);
       box.innerHTML = '<div class="lbl">微光护老</div><div class="txt">' + esc(fallback) + '</div>';
       speak(fallback);
+      completeAgentRequest();
       return;
     }
 
-    var local = forcedPlan || WGAgent.planLocal(taskText, agentContext());
+    var local = forcedPlan || WGAgent.planLocal(taskText, agentContext(taskText));
     showAgentLive(local, forcedPlan ? '主动 Agent 已生成关怀计划' :
       (WGAgent.shouldUseRemote(taskText, local) ? '正在请求大模型拆解任务…' : '本地安全规划已就绪'));
     traceStep('规划', local.goal + ' · ' + local.steps.length + ' 步');
@@ -2472,7 +2534,42 @@
       traceEnd(say);
       box.innerHTML = '<div class="lbl">微光 Agent</div><div class="txt">' + esc(say) + '</div>';
       speak(say);
+    }).then(function () {
+      completeAgentRequest();
     });
+  }
+
+  function answer(text, via, forcedPlan, internal) {
+    if (!internal) markActive();
+    var request = {
+      id: ++AGENT_RUN.seq,
+      text: text,
+      normalizedText: normalize(text),
+      via: via,
+      forcedPlan: forcedPlan,
+      internal: !!internal,
+      urgent: !!(window.WGAgent && window.WGAgent.hasUrgentSignal(normalize(text))),
+      pendingAtEnqueue: !!(D.agentMemory && D.agentMemory.pending),
+      at: Date.now()
+    };
+    if (AGENT_RUN.busy || AGENT_RUN.current) {
+      queueAgentRequest(request);
+      return;
+    }
+    startAgentRequest(request);
+  }
+
+  function cancelAgentTask() {
+    if (!AGENT_RUN.current) {
+      toast('现在没有正在执行的任务');
+      return;
+    }
+    AGENT_RUN.cancelRequested = true;
+    agentCancelVisible(false);
+    var modal = $('#agentConfirmModal');
+    if (modal && !modal.hidden) closeAgentConfirm(false);
+    setAgentMonitorStatus('acting', '正在停止当前任务', '已停止后续工具步骤，其他功能不受影响。');
+    toast('正在停止', 1800);
   }
 
   function esc(s) {
@@ -2904,7 +3001,11 @@
 
   var SYNC = { last: 0, ok: false, err: '' };
   var syncTimer = null;
-  var SERVER_INFO = { addresses: [], port: 0, detected: false };
+  var SERVER_INFO = {
+    addresses: [], port: 0, detected: false,
+    careWatchdogReady: false, alertWebhookReady: false, escalationWebhookReady: false,
+    retentionDays: 0
+  };
 
   /* 页面本来就是从同步服务打开的，就直接认出来，不用手填地址 */
   function probeServer(base) {
@@ -2917,6 +3018,10 @@
         SERVER_INFO.addresses = j.addresses || [];
         SERVER_INFO.port = j.port || 8080;
         SERVER_INFO.detected = true;
+        SERVER_INFO.careWatchdogReady = !!j.careWatchdogReady;
+        SERVER_INFO.alertWebhookReady = !!j.alertWebhookReady;
+        SERVER_INFO.escalationWebhookReady = !!j.escalationWebhookReady;
+        SERVER_INFO.retentionDays = Number(j.retentionDays) || 0;
         D.settings.serverUrl = base;
         save();
         return true;
@@ -3025,7 +3130,8 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(syncPayload())
-      }).then(function () {
+      }).then(function (r) {
+        if (!r.ok) throw new Error('同步服务返回 ' + r.status);
         SYNC.last = Date.now(); SYNC.ok = true; SYNC.err = '';
       }).catch(function (e) {
         SYNC.ok = false; SYNC.err = (e && e.message) || '连不上';
@@ -4322,6 +4428,18 @@
         (!(D.settings.serverUrl || '').trim() ? 'meh' : (SYNC.ok ? 'ok' : 'no')) + '">' +
         (!(D.settings.serverUrl || '').trim() ? '未启用' :
           (SYNC.ok ? (SERVER_INFO.detected ? '自动连接' : '正常') : '未连上')) + '</span></li>' +
+      '<li><span>服务端看护</span><span class="' +
+        (SERVER_INFO.careWatchdogReady ? 'ok' : 'meh') + '">' +
+        (SERVER_INFO.careWatchdogReady ? '运行中' : '未连接') + '</span></li>' +
+      '<li><span>离线告警出口</span><span class="' +
+        (SERVER_INFO.alertWebhookReady ? 'ok' : 'meh') + '">' +
+        (SERVER_INFO.alertWebhookReady ? '已配置' : '未配置') + '</span></li>' +
+      '<li><span>升级备用出口</span><span class="' +
+        (SERVER_INFO.escalationWebhookReady ? 'ok' : 'meh') + '">' +
+        (SERVER_INFO.escalationWebhookReady ? '已配置' : '未配置') + '</span></li>' +
+      '<li><span>已关闭数据处理</span><span class="meh">' +
+        (SERVER_INFO.retentionDays ? SERVER_INFO.retentionDays + ' 天后清理' : '未连接') +
+      '</span></li>' +
       '<li><span>家人留言通道</span><span class="' + (MSGSTATE.ok ? 'ok' : 'meh') + '">' +
         (MSGSTATE.last ? (fmtTime(MSGSTATE.last) + ' 检查过') : '还没检查过') +
       '</span></li>' +
@@ -4819,8 +4937,18 @@
       if (act === 'take') {
         markTaken(id, btn.getAttribute('data-time'));
       } else if (act === 'delmed') {
-        D.meds = D.meds.filter(function (m) { return m.id !== id; });
-        save(); renderMeds(); toast('已删除');
+        var medIndex = -1;
+        for (var mi = 0; mi < D.meds.length; mi++) {
+          if (D.meds[mi].id === id) { medIndex = mi; break; }
+        }
+        if (medIndex < 0) return;
+        var removedMed = D.meds.splice(medIndex, 1)[0];
+        save(); renderMeds();
+        toast('已删除 ' + removedMed.name, 6000, '撤销', function () {
+          D.meds.splice(Math.min(medIndex, D.meds.length), 0, removedMed);
+          save(); renderMeds();
+          toast('已经恢复');
+        });
       } else if (act === 'writecard') {
         var med = D.meds.filter(function (m) { return m.id === id; })[0];
         if (med) writeMedToCard(med);
@@ -4867,8 +4995,18 @@
       var btn = ev.target.closest ? ev.target.closest('[data-act="delcontact"]') : null;
       if (!btn) return;
       var id = btn.getAttribute('data-id');
-      D.contacts = D.contacts.filter(function (c) { return c.id !== id; });
-      save(); renderContacts(); toast('已删除');
+      var contactIndex = -1;
+      for (var ci = 0; ci < D.contacts.length; ci++) {
+        if (D.contacts[ci].id === id) { contactIndex = ci; break; }
+      }
+      if (contactIndex < 0) return;
+      var removedContact = D.contacts.splice(contactIndex, 1)[0];
+      save(); renderContacts();
+      toast('已删除 ' + removedContact.name, 6000, '撤销', function () {
+        D.contacts.splice(Math.min(contactIndex, D.contacts.length), 0, removedContact);
+        save(); renderContacts();
+        toast('已经恢复');
+      });
     });
 
     // 健康评估
@@ -4952,8 +5090,14 @@
       });
     });
     $('#btnClearRecords').addEventListener('click', function () {
+      var oldRecords = recTab === 'fraud' ? D.fraudLogs.slice() : D.medLogs.slice();
       if (recTab === 'fraud') D.fraudLogs = []; else D.medLogs = [];
-      save(); renderRecords(); toast('记录已清空');
+      save(); renderRecords();
+      toast('记录已清空', 6000, '撤销', function () {
+        if (recTab === 'fraud') D.fraudLogs = oldRecords; else D.medLogs = oldRecords;
+        save(); renderRecords();
+        toast('记录已经恢复');
+      });
     });
 
     // 设置
@@ -5088,11 +5232,23 @@
     $('#btnRecords').addEventListener('click', function () { go('records'); });
     $('#btnReset').addEventListener('click', function () {
       if (!window.confirm('确定要清空所有数据吗？吃药提醒和联系人都将被删除。')) return;
+      var previousData = JSON.stringify(D);
       try { localStorage.removeItem(STORE_KEY); } catch (e) {}
       D = JSON.parse(JSON.stringify(DEFAULT_DATA));
       applySize();
       renderMeds(); renderContacts(); renderRecords(); renderSettings(); renderEnvStatus();
-      toast('已经恢复成初始状态');
+      toast('已经恢复成初始状态', 8000, '撤销', function () {
+        try {
+          D = JSON.parse(previousData);
+          localStorage.setItem(STORE_KEY, previousData);
+        } catch (e) {
+          D = JSON.parse(JSON.stringify(DEFAULT_DATA));
+        }
+        applySize();
+        renderMeds(); renderContacts(); renderRecords(); renderSettings(); renderEnvStatus();
+        syncNow();
+        toast('数据已经恢复');
+      });
     });
 
     // 提醒弹窗
@@ -5109,6 +5265,33 @@
     $('#btnMsgOk').addEventListener('click', function () { $('#msgModal').hidden = true; pendingFamilyMsg = null; stopSpeaking(); });
     $('#btnAgentConfirm').addEventListener('click', function () { closeAgentConfirm(true); });
     $('#btnAgentCancel').addEventListener('click', function () { closeAgentConfirm(false); });
+    $('#btnCancelAgent').addEventListener('click', cancelAgentTask);
+    document.addEventListener('keydown', function (e) {
+      var confirmModal = $('#agentConfirmModal');
+      if (e.key === 'Escape' && confirmModal && !confirmModal.hidden) {
+        closeAgentConfirm(false);
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      var visibleModals = $$('.modal').filter(function (modal) { return !modal.hidden; });
+      var modal = visibleModals[visibleModals.length - 1];
+      if (!modal) return;
+      var focusable = $$('button, input, textarea, a[href], [tabindex]:not([tabindex="-1"])', modal)
+        .filter(function (element) { return !element.disabled && !element.hidden; });
+      if (!focusable.length) return;
+      var first = focusable[0];
+      var last = focusable[focusable.length - 1];
+      if (!modal.contains(document.activeElement)) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    });
     $('#btnAuthPair').addEventListener('click', submitAuthPair);
     $('#authPairCode').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') submitAuthPair();
