@@ -723,6 +723,19 @@ function runCareWatchdog() {
       'high'
     )) created++;
   }
+  (Array.isArray(state.recurringGoals) ? state.recurringGoals : []).forEach(function (goal) {
+    var dueAt = Number(goal && goal.at) || 0;
+    if (!dueAt || !goal.text) return;
+    // 页面内提醒已经正常展示时不重复生成家庭告警。
+    if (Number(goal.notifiedAt) >= dueAt) return;
+    if (now < dueAt + 10 * 60 * 1000 || now > dueAt + 48 * 3600000) return;
+    if (addWatchdogNotice(
+      'goal:' + String(goal.id || goal.text) + ':' + dueAt,
+      name + '的持续目标已超过执行时间：' + String(goal.text).slice(0, 120),
+      '持续提醒',
+      'high'
+    )) created++;
+  });
   return created;
 }
 
@@ -805,6 +818,16 @@ var AGENT_PLANNER_SYSTEM = [
   '可用工具：' + JSON.stringify(AgentCore.toolCatalog())
 ].join('\n');
 
+var AGENT_REPLANNER_SYSTEM = [
+  '你是“微光护老”的任务重规划器。你不回答老人，只根据目标、已完成步骤和真实观察决定下一步。',
+  '只输出一个 JSON 对象，格式为：{"decision":"continue|ask-user|complete|stop","reason":"简短原因","steps":[{"tool":"工具名","args":{},"purpose":"步骤目的"}],"spoken":"可选"}.',
+  'steps 最多 3 步。不要重复已经成功的副作用操作；写操作必须使用已有信息，不得编造联系人、提醒或工具结果。',
+  '如果信息不足，decision 使用 ask-user，并只输出一个 ask_user 步骤。',
+  '如果目标已经完成，decision 使用 complete，steps 为空。若无法安全继续，decision 使用 stop。',
+  '高风险、拨号和资金相关场景仍由本地安全策略决定，不能声称工具已经执行。',
+  '可用工具：' + JSON.stringify(AgentCore.toolCatalog())
+].join('\n');
+
 function llmComplete(messages, options) {
   options = options || {};
   return new Promise(function (resolve, reject) {
@@ -820,9 +843,10 @@ function llmComplete(messages, options) {
     });
     var u;
     try { u = new URL(llmConfig.baseUrl); } catch (e) { reject(new Error('接口地址不对')); return; }
-    var rq = https.request({
+    var transport = u.protocol === 'http:' ? http : https;
+    var rq = transport.request({
       hostname: u.hostname,
-      port: u.port || 443,
+      port: u.port || (u.protocol === 'http:' ? 80 : 443),
       path: u.pathname + (u.search || ''),
       method: 'POST',
       headers: {
@@ -927,6 +951,75 @@ function llmPlan(text, context) {
     catch (e) { throw new Error('Agent 计划不是合法 JSON'); }
     var plan = AgentCore.normalizePlan(parsed, text);
     if (!plan) throw new Error('Agent 计划为空');
+    return plan;
+  });
+}
+
+function llmReplan(state) {
+  var safeState = {
+    goal: String((state && state.goal) || '').slice(0, 300),
+    rawText: String((state && state.rawText) || '').slice(0, 500),
+    risk: String((state && state.risk) || 'normal').slice(0, 20),
+    completed: Array.isArray(state && state.completed) ? state.completed.slice(-8).map(function (item) {
+      return {
+        tool: String((item && item.tool) || '').slice(0, 40),
+        ok: !!(item && item.ok),
+        observation: String((item && item.observation) || '').slice(0, 300)
+      };
+    }) : [],
+    failedTool: String((state && state.failedTool) || '').slice(0, 40),
+    failure: String((state && state.failure) || '').slice(0, 300),
+    remainingSteps: Array.isArray(state && state.remainingSteps)
+      ? state.remainingSteps.slice(0, 8).map(function (name) { return String(name || '').slice(0, 40); })
+      : []
+  };
+  return llmComplete([
+    { role: 'system', content: AGENT_REPLANNER_SYSTEM },
+    { role: 'user', content: '当前任务状态：' + JSON.stringify(safeState) }
+  ], { temperature: 0.1, maxTokens: 700 }).then(function (raw) {
+    var parsed;
+    try { parsed = parsePlanJson(raw); }
+    catch (e) { throw new Error('重规划结果不是合法 JSON'); }
+    var decision = ['continue', 'ask-user', 'complete', 'stop'].indexOf(parsed.decision) >= 0
+      ? parsed.decision : 'continue';
+    if (decision === 'ask-user' &&
+        (!Array.isArray(parsed.steps) ||
+         !parsed.steps.some(function (step) { return step && step.tool === 'ask_user'; }))) {
+      parsed.steps = [{
+        tool: 'ask_user',
+        args: {
+          question: String(parsed.spoken || parsed.reason || '我还需要再确认一件事，请说清楚一点。').slice(0, 300)
+        },
+        purpose: '补充缺失信息'
+      }];
+    }
+    if (decision === 'continue' &&
+        (!Array.isArray(parsed.steps) || parsed.steps.length === 0)) {
+      decision = 'stop';
+    }
+    if ((decision === 'complete' || decision === 'stop') &&
+        (!Array.isArray(parsed.steps) || parsed.steps.length === 0)) {
+      return {
+        goal: safeState.goal,
+        risk: safeState.risk,
+        steps: [],
+        source: 'llm-replan',
+        decision: decision,
+        reason: String(parsed.reason || '').slice(0, 200),
+        safetyNotes: Array.isArray(parsed.safetyNotes) ? parsed.safetyNotes.slice(0, 5) : [],
+        spoken: String(parsed.spoken || '').slice(0, 240)
+      };
+    }
+    var plan = AgentCore.normalizePlan({
+      goal: safeState.goal,
+      risk: parsed.risk || safeState.risk,
+      steps: parsed.steps || [],
+      safetyNotes: parsed.safetyNotes || [],
+      spoken: parsed.spoken || ''
+    }, safeState.rawText);
+    plan.decision = decision;
+    plan.source = 'llm-replan';
+    plan.reason = String(parsed.reason || '').slice(0, 200);
     return plan;
   });
 }
@@ -1301,7 +1394,7 @@ function handle(req, res) {
   if (p === '/api/agent/tools') {
     sendJson(res, 200, {
       ok: true,
-      architecture: 'planner + tools + memory + safety gate + trace',
+      architecture: 'planner + dynamic replanner + tool contracts + persistent tasks + memory + safety gate + trace',
       tools: AgentCore.toolCatalog()
     });
     return;
@@ -1330,6 +1423,31 @@ function handle(req, res) {
       }).catch(function (e) {
         sendJson(res, 200, { ok: false, error: e.message });
         console.log('[' + new Date().toLocaleTimeString() + '] Agent 规划失败：' + e.message);
+      });
+    });
+    return;
+  }
+
+  /* ---------- Agent 动态重规划：观察真实结果后只生成下一小段计划 ---------- */
+  if (p === '/api/agent/replan') {
+    if (req.method !== 'POST') { sendJson(res, 405, { error: '只支持POST' }); return; }
+    if (!allowRequest(req, 'agent-replan', 30, 60 * 1000)) {
+      sendJson(res, 429, { ok: false, error: '重规划请求过于频繁，请稍后再试' });
+      return;
+    }
+    if (!llmConfig) {
+      sendJson(res, 503, { ok: false, error: '未配置大模型，改用本地恢复策略' });
+      return;
+    }
+    readJsonBody(req, res, 32 * 1024, function (obj) {
+      var t0 = Date.now();
+      llmReplan(obj).then(function (plan) {
+        sendJson(res, 200, { ok: true, plan: plan, elapsedMs: Date.now() - t0 });
+        console.log('[' + new Date().toLocaleTimeString() + '] Agent 重规划：' +
+          plan.decision + '，' + plan.steps.length + ' 步');
+      }).catch(function (e) {
+        sendJson(res, 200, { ok: false, error: e.message });
+        console.log('[' + new Date().toLocaleTimeString() + '] Agent 重规划失败：' + e.message);
       });
     });
     return;

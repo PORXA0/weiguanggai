@@ -73,6 +73,23 @@ var prototypePlan = agent.normalizePlan({
 }, '现在几点');
 assert.deepStrictEqual(tools(prototypePlan), ['get_time'], '对象原型属性不能伪装成合法工具');
 
+var invalidArgsPlan = agent.normalizePlan({
+  goal: '拒绝非法参数',
+  risk: 'normal',
+  steps: [
+    { tool: 'open_page', args: { page: 'admin' } },
+    { tool: 'get_time', args: {} }
+  ]
+}, '现在几点');
+assert.deepStrictEqual(tools(invalidArgsPlan), ['get_time'], '非法枚举参数必须被工具契约拒绝');
+
+assert.strictEqual(agent.validateToolArgs('create_reminder', {}).ok, false);
+assert.strictEqual(agent.validateToolArgs('create_reminder', { text: '明天去医院' }).ok, true);
+var catalog = agent.toolCatalog();
+var createReminderMeta = catalog.filter(function (item) { return item.name === 'create_reminder'; })[0];
+assert.strictEqual(createReminderMeta.effect.idempotency, 'required');
+assert(createReminderMeta.inputSchema.required.indexOf('text') >= 0);
+
 var unsafeModelPlan = agent.normalizePlan({
   goal: '聊天',
   risk: 'normal',
@@ -209,4 +226,9 @@ var groundedUrgentFailure = agent.composeGroundedAnswer({
 }], '我摔倒了');
 assert(groundedUrgentFailure.indexOf('家人通知还没有成功') >= 0);
 
-console.log('Agent core tests passed:', 58);
+assert.deepStrictEqual(tools(agent.planLocal('我有哪些安排')), ['list_reminders']);
+assert.deepStrictEqual(tools(agent.planLocal('取消明天去公园的提醒')), ['cancel_reminder']);
+assert.deepStrictEqual(tools(agent.planLocal('把明天去医院的提醒改到下午三点')), ['update_reminder']);
+assert.deepStrictEqual(tools(agent.planLocal('每天八点提醒我吃药')), ['create_recurring_reminder']);
+
+console.log('Agent core tests passed:', 70);

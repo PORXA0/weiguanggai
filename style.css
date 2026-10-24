@@ -1393,10 +1393,41 @@ body{
   margin:12px 0 16px; padding:14px 16px; border-radius:var(--r-sm);
   border:1px solid #D9E5E0; background:#F5FAF8;
 }
+.agent-tasks{
+  margin:12px 0 16px; padding:14px 16px; border-radius:var(--r-sm);
+  border:1px solid #D9E5E0; background:#FFF;
+}
+.at-title{ display:flex; justify-content:space-between; gap:10px; align-items:baseline; margin-bottom:8px; }
+.at-title span{ color:var(--ink-3); font-size:.76rem; }
+.at-item{ padding:10px 0; border-top:1px dashed var(--line); }
+.at-title + .at-item{ border-top:0; padding-top:2px; }
+.at-main{ display:flex; gap:8px; align-items:flex-start; justify-content:space-between; }
+.at-main b{ font-size:.92rem; line-height:1.55; overflow-wrap:anywhere; }
+.at-status{
+  flex:none; padding:2px 8px; border-radius:999px; background:#E7EEEB;
+  color:var(--green); font-size:.7rem; font-weight:750;
+}
+.at-status.at-failed,.at-status.at-interrupted{ background:#FCE8E2; color:#A83D27; }
+.at-status.at-waiting_user,.at-status.at-waiting_consent{ background:#FFF1D8; color:#8C6117; }
+.at-status.at-handoff{ background:#E7EEEB; color:var(--green); }
+.at-status.at-abandoned,.at-status.at-cancelled{ background:#EEECE8; color:#6D655D; }
+.at-item small{ display:block; margin-top:5px; color:var(--ink-3); font-size:.75rem; line-height:1.6; }
+.at-actions{ display:flex; gap:8px; margin-top:8px; }
+.at-actions button{
+  padding:5px 12px; border-radius:999px; border:1px solid var(--line);
+  background:var(--card); color:var(--ink-2); font-size:.76rem; font-weight:750;
+}
 .am-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
 .am-head b{ font-size:.96rem; }
 .am-head span{ color:var(--ink-3); font-size:.78rem; }
 .agent-memory ul{ margin:10px 0 0; padding-left:20px; color:var(--ink-2); font-size:.86rem; line-height:1.7; }
+.agent-memory li{ display:flex; gap:8px; align-items:center; }
+.agent-memory li span{ flex:1; }
+.agent-memory li small{ color:var(--ink-3); font-size:.7rem; }
+.agent-memory li button{
+  flex:none; padding:2px 8px; border-radius:999px; border:1px solid var(--line);
+  background:#fff; color:var(--ink-3); font-size:.7rem;
+}
 .agent-memory p{ margin:9px 0 0; color:var(--ink-3); font-size:.82rem; }
 .agent-memory .am-last{ color:var(--green); }
 

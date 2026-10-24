@@ -5,9 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test-agent.js && node test-agent-benchmark.js && node test-heldout.js && node test-time-parser.js && node test-server-events.js && node test-backup-recovery.js && node test-frontend-safety.js",
+    "test": "node test-agent.js && node test-agent-benchmark.js && node test-heldout.js && node test-time-parser.js && node test-task-store.js && node test-memory.js && node test-server-events.js && node test-replanner.js && node test-backup-recovery.js && node test-frontend-safety.js",
     "test:ui": "node test-ui-e2e.js",
-    "check": "node --check agent-core.js && node --check app.js && node --check family.js && node --check map.js && node --check time-parser.js && node --check server.js && node --check test-agent.js && node --check test-agent-benchmark.js && node --check test-heldout.js && node --check test-time-parser.js && node --check test-server-events.js && node --check test-backup-recovery.js && node --check test-frontend-safety.js && node --check test-ui-e2e.js"
+    "check": "node --check agent-core.js && node --check app.js && node --check family.js && node --check map.js && node --check time-parser.js && node --check task-store.js && node --check memory.js && node --check server.js && node --check test-agent.js && node --check test-agent-benchmark.js && node --check test-heldout.js && node --check test-time-parser.js && node --check test-task-store.js && node --check test-memory.js && node --check test-server-events.js && node --check test-replanner.js && node --check test-backup-recovery.js && node --check test-frontend-safety.js && node --check test-ui-e2e.js"
   },
   "dependencies": {
     "ws": "^8.21.3"

@@ -76,6 +76,16 @@ var sleep = function (ms) {
 
     var auth = JSON.parse(fs.readFileSync(path.join(dataDir, 'auth.json'), 'utf8'));
     authToken = auth.token;
+    var replanWithoutModel = await fetch('http://127.0.0.1:' + port + '/api/agent/replan', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-weiguang-token': authToken
+      },
+      body: JSON.stringify({ goal: '测试动态重规划', completed: [], failure: '工具失败' })
+    });
+    assert.strictEqual(replanWithoutModel.status, 503,
+      '未配置模型时动态重规划必须明确降级');
     var unauthorized = await fetch('http://127.0.0.1:' + port + '/api/state');
     assert.strictEqual(unauthorized.status, 401, '未配对请求必须拒绝');
 
@@ -194,16 +204,27 @@ var sleep = function (ms) {
         elderName: '测试老人',
         lastActiveAt: Date.now() - 2 * 3600000,
         inactiveLimit: 1,
+        recurringGoals: [{
+          id: 'daily-med-goal',
+          at: Date.now() - 20 * 60 * 1000,
+          text: '每天八点提醒吃药',
+          recurrence: 'daily',
+          notifiedAt: 0
+        }],
         updatedAt: Date.now()
       })
     });
-    assert.strictEqual(watchdogState.watchdogCreated, 1, '服务端必须补发超时看护告警');
+    assert.strictEqual(watchdogState.watchdogCreated, 2, '服务端必须补发超时看护和持续目标告警');
     var watchdogEvents = await request('/api/family/events');
     var watchdogEvent = watchdogEvents.events.filter(function (event) {
       return event.source === 'care-watchdog';
     })[0];
     assert(watchdogEvent, '服务端看护告警必须进入家庭事件列表');
     assert.strictEqual(watchdogEvent.level, 'high');
+    var goalEvent = watchdogEvents.events.filter(function (event) {
+      return event.kind === '持续提醒';
+    })[0];
+    assert(goalEvent, '过期持续目标必须进入家庭事件列表');
 
     var oversized = await fetch('http://127.0.0.1:' + port + '/api/family/msg', {
       method: 'POST',

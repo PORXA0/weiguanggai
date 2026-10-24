@@ -42,6 +42,7 @@
       turns: [],
       pending: null
     },
+    agentTasks: [],
     agentMonitor: {
       handled: {},
       pending: null,
@@ -1058,7 +1059,8 @@
     return day + period + h12 + '点' + (mm ? pad2(mm) + '分' : '');
   }
 
-  function trySchedule(text) {
+  function trySchedule(text, options) {
+    options = options || {};
     if (/几点|什么时候|多久/.test(text)) return null;
     var hasKw = SCHEDULE_KW.some(function (w) { return text.indexOf(w) >= 0; });
     var isQ = /(吗|嘛|么)\s*$/.test(text) || /是不是|对不对/.test(text);
@@ -1085,7 +1087,27 @@
     if (when.at.getTime() < Date.now() - 3600000) return null;
 
     var evText = extractEventText(text, when.matched) || '有事';
-    var ev = { id: uid(), at: when.at.getTime(), text: evText, raw: text, createdAt: Date.now() };
+    if (options.dedupeKey) {
+      var previous = D.events.filter(function (event) {
+        return event.dedupeKey === options.dedupeKey;
+      })[0];
+      if (previous) {
+        return {
+          text: '这条提醒已经保存过了：' + fmtWhen(previous.at) + '，' + previous.text + '。',
+          plan: previous,
+          duplicate: true
+        };
+      }
+    }
+    var ev = {
+      id: uid(),
+      at: when.at.getTime(),
+      text: evText,
+      raw: text,
+      createdAt: Date.now(),
+      recurrence: options.recurrence || '',
+      dedupeKey: options.dedupeKey || ''
+    };
     D.events.push(ev);
     if (D.events.length > 60) D.events.length = 60;
     save();
@@ -1111,7 +1133,9 @@
       item.className = 'plan-item' + (ev.at < now ? ' is-past' : '');
       item.innerHTML =
         '<div class="pi-when">' + esc(fmtWhen(ev.at)) + '</div>' +
-        '<div class="pi-text">' + esc(ev.text) + '</div>' +
+        '<div class="pi-text">' + esc(ev.text) +
+          (ev.recurrence ? '<small> · ' + (ev.recurrence === 'weekdays' ? '每个工作日' : '每天') + '</small>' : '') +
+        '</div>' +
         '<button class="pi-del" type="button" data-id="' + ev.id + '">删掉</button>';
       box.appendChild(item);
     });
@@ -1142,6 +1166,20 @@
   function closePlanReminder() {
     $('#planModal').hidden = true;
     stopSpeaking();
+    if (pendingEvent && pendingEvent.recurrence) {
+      var next = new Date(pendingEvent.at);
+      do {
+        next.setDate(next.getDate() + 1);
+      } while (pendingEvent.recurrence === 'weekdays' &&
+        (next.getDay() === 0 || next.getDay() === 6));
+      pendingEvent.at = next.getTime();
+      pendingEvent.notifiedAt = 0;
+      pendingEvent.updatedAt = Date.now();
+      firedKeys['ev|' + pendingEvent.id] = false;
+      save();
+      renderPlans();
+      syncNow();
+    }
     pendingEvent = null;
   }
 
@@ -1819,23 +1857,42 @@
     if (D.agentMemory.pending === undefined) D.agentMemory.pending = null;
   }
 
+  function ensureAgentTasks() {
+    D.agentTasks = window.WGTaskStore
+      ? window.WGTaskStore.ensure(D.agentTasks)
+      : (Array.isArray(D.agentTasks) ? D.agentTasks : []);
+    return D.agentTasks;
+  }
+
+  function updateAgentTask(taskId, patch) {
+    if (!taskId || !window.WGTaskStore) return null;
+    var updated = window.WGTaskStore.update(ensureAgentTasks(), taskId, patch || {});
+    saveSoon();
+    return updated;
+  }
+
   function resolvePendingAgentInput(text) {
     ensureAgentMemory();
     var pending = D.agentMemory.pending;
     if (!pending || !pending.originalText) return { text: text, used: false };
     if (Date.now() - (pending.at || 0) > 10 * 60 * 1000) {
+      if (pending.taskId) updateAgentTask(pending.taskId, { status: 'abandoned', error: '等待回答超时' });
       D.agentMemory.pending = null;
       save();
       return { text: text, used: false };
     }
     var merged = WGAgent.mergePendingInput(pending, text, Date.now());
     if (merged.expired) {
+      if (pending.taskId) updateAgentTask(pending.taskId, { status: 'abandoned', error: '等待回答超时' });
       D.agentMemory.pending = null;
       save();
     } else if (!merged.used) {
+      if (pending.taskId) updateAgentTask(pending.taskId, { status: 'abandoned', error: '老人开始了新的请求' });
       // 新请求不像是在补充缺失信息时，结束上一轮追问，避免把无关对话拼进旧任务。
       D.agentMemory.pending = null;
       save();
+    } else if (pending.taskId) {
+      updateAgentTask(pending.taskId, { status: 'handoff', currentStep: '', error: '' });
     }
     return { text: merged.text, used: merged.used };
   }
@@ -1851,6 +1908,9 @@
     });
     var care = inactiveInfo();
     var needsMedicationNames = /药|吃|服药/.test(String(requestText || ''));
+    var relevantFacts = window.WGMemory
+      ? window.WGMemory.retrieveFacts(D.agentMemory.facts, requestText, 3, Date.now())
+      : D.agentMemory.facts.slice(0, 3);
     return {
       elderName: D.settings.elderName || '老人',
       city: D.settings.city || '',
@@ -1869,7 +1929,7 @@
       },
       contacts: (D.contacts || []).filter(function (c) { return c.phone; })
         .slice(0, 4).map(function (c) { return { name: String(c.name || '').slice(0, 30) }; }),
-      memoryFacts: D.agentMemory.facts.slice(0, 3).map(function (f) {
+      memoryFacts: relevantFacts.map(function (f) {
         return String(f.text || '').slice(0, 120);
       }),
       recentTurns: D.agentMemory.turns.slice(0, 2).map(function (t) {
@@ -1885,6 +1945,22 @@
     return (window.WGAgent && WGAgent.TOOLS && WGAgent.TOOLS[name]) || {
       label: name || '工具', description: '执行一个 Agent 步骤', risk: 'safe'
     };
+  }
+
+  function stableHash(value) {
+    var text = String(value || '');
+    var hash = 2166136261;
+    for (var i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function toolDedupeKey(taskId, step) {
+    return 'task:' + String(taskId || '') + ':' +
+      String(step && step.tool || '') + ':' +
+      stableHash(JSON.stringify(step && step.args || {}));
   }
 
   function showAgentLive(plan, note) {
@@ -1933,6 +2009,48 @@
       var normalized = window.WGAgent.normalizePlan(j.plan, text);
       if (!normalized) throw new Error('计划校验失败');
       normalized.elapsedMs = j.plan.elapsedMs || 0;
+      return normalized;
+    });
+  }
+
+  function remoteAgentReplan(text, plan, results, failedStep, failedResult) {
+    var completed = results.map(function (item) {
+      return {
+        tool: item.step && item.step.tool,
+        ok: !!(item.result && item.result.ok),
+        observation: String((item.result && item.result.text) || '').slice(0, 300)
+      };
+    });
+    return fetch('/api/agent/replan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        goal: plan.goal,
+        rawText: text,
+        risk: plan.risk,
+        completed: completed,
+        failedTool: failedStep && failedStep.tool,
+        failure: String((failedResult && failedResult.text) || '').slice(0, 300),
+        remainingSteps: plan.steps.slice(0, 8).map(function (step) { return step.tool; })
+      })
+    }).then(function (response) {
+      if (!response.ok) throw new Error('重规划服务不可用');
+      return response.json();
+    }).then(function (body) {
+      if (!body || !body.ok || !body.plan) throw new Error((body && body.error) || '重规划失败');
+      var remote = body.plan;
+      if ((remote.decision === 'complete' || remote.decision === 'stop') &&
+          (!remote.steps || !remote.steps.length)) {
+        remote.source = 'llm-replan';
+        remote.elapsedMs = body.elapsedMs || 0;
+        return remote;
+      }
+      var normalized = window.WGAgent.normalizePlan(remote, text);
+      if (!normalized) throw new Error('重规划校验失败');
+      normalized.source = 'llm-replan';
+      normalized.decision = remote.decision || 'continue';
+      normalized.reason = remote.reason || '';
+      normalized.elapsedMs = body.elapsedMs || 0;
       return normalized;
     });
   }
@@ -1986,7 +2104,11 @@
         save();
         setAgentMonitorStatus('acting', '家庭协同 Agent 已推送事件',
           '正在等待家人查看和确认。');
-        return { ok: true, text: '求助事件已经推到家人端，正在等待家人确认。' };
+        return {
+          ok: true,
+          text: '求助事件已经推到家人端，正在等待家人确认。',
+          eventId: event.id
+        };
       }
       return { ok: false, text: '家人通知没有发出去。' };
     }).catch(function () {
@@ -2034,10 +2156,24 @@
         text: '这一步会把内容保存为长期记忆。'
       };
     }
-    if (tool === 'create_reminder') {
+    if (tool === 'create_reminder' || tool === 'create_recurring_reminder') {
       return {
-        title: '要保存这个提醒吗？',
-        text: '这一步会写入你的日程提醒。'
+        title: tool === 'create_recurring_reminder' ? '要保存重复提醒吗？' : '要保存这个提醒吗？',
+        text: tool === 'create_recurring_reminder'
+          ? '这一步会保存每天或工作日的重复提醒。'
+          : '这一步会写入你的日程提醒。'
+      };
+    }
+    if (tool === 'update_reminder') {
+      return {
+        title: '要修改这条提醒吗？',
+        text: 'Agent 会更新原提醒的时间，不会额外创建一条重复日程。'
+      };
+    }
+    if (tool === 'cancel_reminder') {
+      return {
+        title: '要取消这条提醒吗？',
+        text: '取消后会提供撤销入口。'
       };
     }
     return {
@@ -2076,6 +2212,79 @@
     return new Promise(function (resolve) {
       agentConfirmResolver = resolve;
     });
+  }
+
+  function findReminderMatch(args, rawText) {
+    args = args || {};
+    var upcoming = (D.events || []).filter(function (event) {
+      return event && event.at >= Date.now() - 60000;
+    }).sort(function (a, b) { return a.at - b.at; });
+    if (args.reminderId) {
+      var byId = upcoming.filter(function (event) { return event.id === args.reminderId; })[0];
+      if (byId) return byId;
+    }
+    var query = String(args.query || rawText || '');
+    var exact = upcoming.filter(function (event) {
+      return event.text && (query.indexOf(event.text) >= 0 || event.text.indexOf(query) >= 0);
+    })[0];
+    if (exact) return exact;
+    var best = null;
+    var bestScore = 0;
+    upcoming.forEach(function (event) {
+      var score = 0;
+      String(event.text || '').split('').forEach(function (ch) {
+        if (/[\u4e00-\u9fa5A-Za-z0-9]/.test(ch) && query.indexOf(ch) >= 0) score++;
+      });
+      if (score > bestScore) {
+        best = event;
+        bestScore = score;
+      }
+    });
+    return bestScore >= 2 ? best : null;
+  }
+
+  function reminderListText() {
+    var upcoming = (D.events || []).filter(function (event) {
+      return event && event.at >= Date.now() - 60000;
+    }).sort(function (a, b) { return a.at - b.at; });
+    if (!upcoming.length) return '接下来还没有安排。';
+    return '接下来有 ' + upcoming.length + ' 件事：' +
+      upcoming.slice(0, 6).map(function (event) {
+        return fmtWhen(event.at) + '，' + event.text +
+          (event.recurrence ? (event.recurrence === 'weekdays' ? '，每个工作日' : '，每天') : '');
+      }).join('；') + '。';
+  }
+
+  function verifyToolResult(step, result) {
+    if (!result || !result.ok) return { ok: !!(result && result.ok), error: '' };
+    var tool = step && step.tool;
+    if (tool === 'create_reminder' || tool === 'create_recurring_reminder') {
+      var reminderId = result.action && result.action.event && result.action.event.id;
+      var found = reminderId && D.events.some(function (event) { return event.id === reminderId; });
+      return { ok: !!found, error: found ? '' : '提醒没有出现在日程中' };
+    }
+    if (tool === 'update_reminder') {
+      var updated = D.events.filter(function (event) { return event.id === result.reminderId; })[0];
+      return { ok: !!updated && updated.at === result.updatedAt, error: '日程时间没有写入成功' };
+    }
+    if (tool === 'cancel_reminder') {
+      var remains = D.events.some(function (event) { return event.id === result.reminderId; });
+      return { ok: !remains, error: remains ? '日程仍然存在' : '' };
+    }
+    if (tool === 'remember_fact') {
+      var factExists = D.agentMemory && D.agentMemory.facts.some(function (item) {
+        return item.id === result.factId;
+      });
+      return { ok: !!factExists, error: factExists ? '' : '长期记忆没有保存成功' };
+    }
+    if (tool === 'notify_family') {
+      return { ok: !!result.eventId, error: result.eventId ? '' : '家人事件缺少事件编号' };
+    }
+    if (tool === 'prepare_call' || tool === 'prepare_emergency_call') {
+      var contact = result.action && result.action.contact;
+      return { ok: !!(contact && contact.phone), error: '拨号按钮没有有效号码' };
+    }
+    return { ok: true, error: '' };
   }
 
   function executeAgentTool(step, rawText) {
@@ -2176,7 +2385,7 @@
       if (/天气/.test(reminderText) && /(然后|再)/.test(reminderText)) {
         reminderText = reminderText.split(/(?:然后|再)/).pop().trim();
       }
-      var planned = trySchedule(reminderText);
+      var planned = trySchedule(reminderText, { dedupeKey: step.dedupeKey });
       if (planned && planned.needClarify) {
         step.args.slot = 'time';
         step.args.resumeTool = 'create_reminder';
@@ -2191,14 +2400,127 @@
         ? { ok: true, text: planned.text, action: { type: 'reminder', event: planned.plan } }
         : { ok: false, text: '我没有听清具体时间。请说“明天早上八点提醒我去公园”这样的完整时间。' });
     }
+    if (tool === 'list_reminders') {
+      return Promise.resolve({ ok: true, text: reminderListText() });
+    }
+    if (tool === 'cancel_reminder') {
+      var cancelTarget = findReminderMatch(args, rawText);
+      if (!cancelTarget) {
+        return Promise.resolve({
+          ok: false,
+          text: '我没有找到要对上的提醒。你可以先问“我有哪些安排”。'
+        });
+      }
+      var cancelIndex = D.events.indexOf(cancelTarget);
+      if (cancelIndex < 0) return Promise.resolve({ ok: false, text: '这条提醒已经不存在了。' });
+      var removed = D.events.splice(cancelIndex, 1)[0];
+      save();
+      renderPlans();
+      syncNow();
+      toast('已经取消：' + removed.text, 7000, '撤销', function () {
+        D.events.splice(Math.min(cancelIndex, D.events.length), 0, removed);
+        save();
+        renderPlans();
+        syncNow();
+        toast('提醒已经恢复');
+      });
+      return Promise.resolve({
+        ok: true,
+        text: '已经取消提醒：' + removed.text + '。',
+        reminderId: removed.id
+      });
+    }
+    if (tool === 'update_reminder') {
+      var updateTarget = findReminderMatch(args, rawText);
+      if (!updateTarget) {
+        return Promise.resolve({
+          ok: false,
+          text: '我没有找到要修改的提醒。你可以先问“我有哪些安排”。'
+        });
+      }
+      var newTime = parseWhen(String(args.text || rawText));
+      if (!newTime || newTime.error || newTime.ambiguous) {
+        step.args.slot = 'time';
+        step.args.resumeTool = 'update_reminder';
+        step.args.query = args.query || rawText;
+        return Promise.resolve({
+          ok: false,
+          askUser: true,
+          stop: true,
+          text: newTime && newTime.ambiguous
+            ? '要改到上午还是晚上？请说一个明确时间。'
+            : '我没有听清新的时间。请说“把去医院改到明天下午三点”这样的完整时间。'
+        });
+      }
+      var oldAt = updateTarget.at;
+      updateTarget.at = newTime.at.getTime();
+      updateTarget.updatedAt = Date.now();
+      updateTarget.notifiedAt = 0;
+      save();
+      renderPlans();
+      syncNow();
+      toast('提醒时间已经修改', 7000, '撤销', function () {
+        updateTarget.at = oldAt;
+        updateTarget.notifiedAt = 0;
+        save();
+        renderPlans();
+        syncNow();
+        toast('原来的时间已经恢复');
+      });
+      return Promise.resolve({
+        ok: true,
+        text: '已经把“' + updateTarget.text + '”改到' + fmtWhen(updateTarget.at) + '。',
+        reminderId: updateTarget.id,
+        updatedAt: updateTarget.at
+      });
+    }
+    if (tool === 'create_recurring_reminder') {
+      var recurringText = String(args.text || rawText);
+      var recurrence = args.recurrence === 'weekdays' ? 'weekdays' : 'daily';
+      var recurringPlan = trySchedule(recurringText, {
+        recurrence: recurrence,
+        dedupeKey: step.dedupeKey
+      });
+      if (recurringPlan && recurringPlan.needClarify) {
+        step.args.slot = 'time';
+        step.args.resumeTool = 'create_recurring_reminder';
+        return Promise.resolve({
+          ok: false,
+          askUser: true,
+          stop: true,
+          text: recurringPlan.text
+        });
+      }
+      return Promise.resolve(recurringPlan && recurringPlan.plan
+        ? {
+            ok: true,
+            text: recurringPlan.text + (recurrence === 'weekdays' ? ' 之后每个工作日提醒。' : ' 之后每天提醒。'),
+            action: { type: 'reminder', event: recurringPlan.plan }
+          }
+        : { ok: false, text: '没有听清重复提醒的时间。' });
+    }
     if (tool === 'remember_fact') {
       ensureAgentMemory();
       var fact = String(args.text || rawText).replace(/^(?:请)?记住/, '').trim().slice(0, 160);
       if (!fact) return Promise.resolve({ ok: false, text: '我没有听清要记住什么。' });
-      D.agentMemory.facts.unshift({ id: uid(), at: Date.now(), text: fact });
-      D.agentMemory.facts = D.agentMemory.facts.slice(0, 20);
+      var factDedupe = step.dedupeKey || '';
+      var sameFact = D.agentMemory.facts.filter(function (item) {
+        return factDedupe && item.dedupeKey === factDedupe;
+      })[0];
+      if (sameFact) return Promise.resolve({ ok: true, text: '这件事我已经记住了：' + sameFact.text });
+      var factRecord = window.WGMemory
+        ? window.WGMemory.addFact(D.agentMemory.facts, {
+            id: uid(),
+            at: Date.now(),
+            text: fact,
+            category: args.category || 'fact',
+            source: 'agent'
+          })
+        : null;
+      if (!factRecord) return Promise.resolve({ ok: false, text: '长期记忆没有保存成功。' });
+      factRecord.dedupeKey = factDedupe;
       save();
-      return Promise.resolve({ ok: true, text: '我记住了：' + fact });
+      return Promise.resolve({ ok: true, text: '我记住了：' + fact, factId: factRecord.id });
     }
     if (tool === 'open_page') {
       var page = String(args.page || 'nav');
@@ -2212,7 +2534,7 @@
     return agentConverse(step, rawText);
   }
 
-  function runAgentTask(text, forcedPlan) {
+  function runAgentTask(text, forcedPlan, taskId) {
     var localPlan = window.WGAgent.planLocal(text, agentContext(text));
     var planPromise = forcedPlan
       ? Promise.resolve(forcedPlan)
@@ -2247,11 +2569,63 @@
         plan.risk === 'urgent' ? '安全 Agent 正在处理高风险任务' : 'Agent 正在执行任务',
         plan.goal
       );
-      AGENT_LIVE = { plan: plan, results: [] };
+      AGENT_LIVE = {
+        plan: plan,
+        results: [],
+        modelCalls: plan.source === 'llm' ? 1 : 0,
+        replans: 0
+      };
       var results = [];
       var halted = false;
       var queue = plan.steps.slice();
       var cursor = 0;
+      var replanCount = 0;
+      var seenStepKeys = {};
+      var goalReviewed = false;
+
+      function reviewCompletedPlan() {
+        if (goalReviewed || plan.source !== 'llm' || halted || AGENT_RUN.cancelRequested ||
+            !results.length) {
+          goalReviewed = true;
+          return Promise.resolve(false);
+        }
+        goalReviewed = true;
+        traceStep('反思', '计划步骤执行完毕，检查目标是否真正完成');
+        return remoteAgentReplan(
+          text,
+          plan,
+          results,
+          null,
+          { ok: true, text: '计划步骤已执行完毕，请检查目标是否完成。' }
+        ).then(function (review) {
+          AGENT_LIVE.modelCalls++;
+          AGENT_LIVE.replans++;
+          if (review.source === 'llm-replan' && review.reason) {
+            traceStep('反思', review.reason);
+          }
+          if (review.decision === 'complete' || review.decision === 'stop') {
+            halted = true;
+            return false;
+          }
+          var added = 0;
+          (review.steps || []).forEach(function (newStep) {
+            if (queue.length >= 12) return;
+            var checked = window.WGAgent.validateToolArgs(newStep.tool, newStep.args || {});
+            if (!checked.ok) return;
+            newStep.args = checked.args;
+            newStep.requiresConfirmation =
+              window.WGAgent.TOOLS[newStep.tool].risk === 'sensitive';
+            var key = newStep.tool + ':' + JSON.stringify(newStep.args || {});
+            if (seenStepKeys[key]) return;
+            queue.push(newStep);
+            appendAgentLiveStep(newStep, queue.length - 1);
+            added++;
+          });
+          return added > 0;
+        }).catch(function () {
+          return false;
+        });
+      }
 
       function runNext() {
         if (AGENT_RUN.cancelRequested) {
@@ -2259,15 +2633,38 @@
           traceStep('安全检查', '已停止当前任务，准备处理新的请求');
           return Promise.resolve();
         }
-        if (halted || cursor >= queue.length || cursor >= 12) return Promise.resolve();
+        if (halted || AGENT_RUN.cancelRequested || cursor >= 12) return Promise.resolve();
+        if (cursor >= queue.length) {
+          if (goalReviewed) return Promise.resolve();
+          return reviewCompletedPlan().then(function () {
+            return runNext();
+          });
+        }
         var index = cursor++;
         var step = queue[index];
+        step.taskId = taskId || '';
+        step.dedupeKey = toolDedupeKey(taskId, step);
+        updateAgentTask(taskId, {
+          status: 'executing',
+          currentStep: agentMeta(step.tool).label
+        });
+        var stepKey = step.tool + ':' + JSON.stringify(step.args || {});
+        if (seenStepKeys[stepKey]) {
+          markAgentStep(index, 'skipped', '重复步骤已跳过');
+          traceStep('安全检查', '跳过重复步骤：' + agentMeta(step.tool).label);
+          return runNext();
+        }
+        seenStepKeys[stepKey] = true;
         if (step.tool === 'notify_family' && !step.args.eventId && TRACE.cur) {
           step.args.eventId = 'evt-' + TRACE.cur.id;
         }
         var needsConfirm = step.requiresConfirmation &&
           !window.WGAgent.authorizeSensitive(step, text, plan);
         if (needsConfirm) {
+          updateAgentTask(taskId, {
+            status: 'waiting_consent',
+            currentStep: agentMeta(step.tool).label
+          });
           markAgentStep(index, 'waiting', '等待老人确认…');
           traceStep('安全检查', '等待老人确认：' + agentMeta(step.tool).label);
         } else {
@@ -2291,30 +2688,60 @@
           if (needsConfirm) {
             traceStep('调用工具', agentMeta(step.tool).label + ' · 老人已确认');
           }
+          updateAgentTask(taskId, {
+            status: 'executing',
+            currentStep: agentMeta(step.tool).label
+          });
           markAgentStep(index, 'running', '正在执行…');
           return executeAgentTool(step, text).then(function (result) {
             result = result || { ok: false, text: '这个工具没有返回结果。' };
+            var verification = verifyToolResult(step, result);
+            result.verification = verification;
+            if (result.ok && !verification.ok) {
+              result.ok = false;
+              result.text = '执行结果校验失败：' + verification.error + '。';
+            }
             results.push({ step: step, result: result });
             AGENT_LIVE.results = results;
             markAgentStep(index, result.ok ? 'done' : 'failed', result.text);
             traceStep('观察', result.text);
 
-            if (!result.ok && !result.cancelled && !result.askUser) {
-              var recovery = window.WGAgent.replanAfterFailure(plan, step, result, text);
-              if (recovery) {
-                traceStep('反思', recovery.reason);
-                setAgentMonitorStatus('acting', 'Agent 正在调整计划', recovery.reason);
-                if (recovery.steps && recovery.steps.length) {
-                  recovery.steps.forEach(function (newStep) {
-                    if (queue.length < 12) {
-                      newStep.requiresConfirmation =
-                        window.WGAgent.TOOLS[newStep.tool].risk === 'sensitive';
-                      queue.push(newStep);
-                      appendAgentLiveStep(newStep, queue.length - 1);
-                    }
+            if (!result.ok && !result.cancelled && !result.askUser && replanCount < 3) {
+              replanCount++;
+              var localRecovery = window.WGAgent.replanAfterFailure(plan, step, result, text);
+              var recoveryPromise = plan.risk === 'urgent'
+                ? Promise.resolve(localRecovery)
+                : remoteAgentReplan(text, plan, results, step, result).catch(function () {
+                    return localRecovery;
                   });
+              return recoveryPromise.then(function (recovery) {
+                if (!recovery) return result;
+                AGENT_LIVE.replans++;
+                if (recovery.source === 'llm-replan') AGENT_LIVE.modelCalls++;
+                traceStep('反思', (recovery.source === 'llm-replan' ? '大模型重规划：' : '本地重规划：') +
+                  (recovery.reason || recovery.strategy || '调整后续步骤'));
+                setAgentMonitorStatus('acting', 'Agent 正在调整计划',
+                  recovery.reason || recovery.strategy || '根据工具结果重新安排');
+                if (recovery.decision === 'complete' || recovery.decision === 'stop') {
+                  halted = true;
                 }
-              }
+                (recovery.steps || []).forEach(function (newStep) {
+                  if (queue.length >= 12) return;
+                  var checked = window.WGAgent.validateToolArgs(newStep.tool, newStep.args || {});
+                  if (!checked.ok) {
+                    traceStep('安全检查', '忽略无效重规划步骤：' + checked.error);
+                    return;
+                  }
+                  newStep.args = checked.args;
+                  newStep.requiresConfirmation =
+                    window.WGAgent.TOOLS[newStep.tool].risk === 'sensitive';
+                  var nextKey = newStep.tool + ':' + JSON.stringify(newStep.args || {});
+                  if (seenStepKeys[nextKey]) return;
+                  queue.push(newStep);
+                  appendAgentLiveStep(newStep, queue.length - 1);
+                });
+                return result;
+              });
             }
             if (result.stop) halted = true;
             if (AGENT_RUN.cancelRequested) halted = true;
@@ -2335,7 +2762,7 @@
     return window.WGAgent.composeGroundedAnswer(run.plan, run.results, rawText);
   }
 
-  function finishAgentAnswer(text, via, run, taskText, usedPending) {
+  function finishAgentAnswer(text, via, run, taskText, usedPending, taskId) {
     var spoken = styleize(composeAgentAnswer(run, text));
     var box = $('#talkAnswer');
     box.hidden = false;
@@ -2384,6 +2811,7 @@
         tool: resumeTool || 'general',
         slot: pendingSlot || (resumeTool === 'create_reminder' ? 'time' : 'general'),
         resumeTool: resumeTool,
+        taskId: taskId,
         question: asked.result.text
       } : null;
       setAgentMonitorStatus('acting', 'Agent 正在等待你的回应', asked.result.text);
@@ -2419,6 +2847,28 @@
     });
     D.agentMemory.turns = D.agentMemory.turns.slice(0, 12);
     save();
+    var failedStep = run.results.filter(function (item) {
+      return item.result && item.result.ok === false &&
+        !item.result.askUser && !item.result.cancelled;
+    })[0];
+    var cancelledStep = run.results.filter(function (item) {
+      return item.result && item.result.cancelled;
+    })[0];
+    var taskStatus = asked ? 'waiting_user'
+      : (cancelledStep || AGENT_RUN.cancelRequested) ? 'cancelled'
+      : failedStep ? 'failed'
+      : 'completed';
+    var taskRecord = ensureAgentTasks().filter(function (task) { return task.id === taskId; })[0];
+    updateAgentTask(taskId, {
+      status: taskStatus,
+      currentStep: '',
+      error: failedStep ? failedStep.result.text : (cancelledStep ? cancelledStep.result.text : ''),
+      toolCalls: run.results.length,
+      modelCalls: AGENT_LIVE.modelCalls || 0,
+      replans: AGENT_LIVE.replans || 0,
+      durationMs: taskRecord ? Date.now() - taskRecord.createdAt : 0
+    });
+    renderAgentTasks();
 
     if (TRACE.cur) {
       TRACE.cur.plan = {
@@ -2463,6 +2913,7 @@
 
   function queueAgentRequest(request) {
     if (!request.urgent && AGENT_RUN.queue.length >= 4) {
+      updateAgentTask(request.taskId, { status: 'abandoned', error: '等待队列已满' });
       toast('还有几件事没做完，请稍等一下', 3200);
       return;
     }
@@ -2477,6 +2928,11 @@
       setAgentMonitorStatus('acting', 'Agent 正在处理上一件事',
         '新请求已排队，当前任务完成后会继续处理。');
     }
+    updateAgentTask(request.taskId, {
+      status: 'queued',
+      error: '',
+      goal: request.text
+    });
     toast(request.urgent ? '紧急请求已优先排队' : '这件事已排队，请稍等', 2600);
   }
 
@@ -2485,6 +2941,14 @@
     AGENT_RUN.current = request;
     AGENT_RUN.cancelRequested = false;
     agentCancelVisible(true);
+    var persistedTask = window.WGTaskStore &&
+      ensureAgentTasks().filter(function (task) { return task.id === request.taskId; })[0];
+    updateAgentTask(request.taskId, {
+      status: 'running',
+      attempts: ((persistedTask && persistedTask.attempts) || 0) + 1,
+      error: '',
+      goal: request.text
+    });
 
     var text = request.text;
     var via = request.via;
@@ -2512,6 +2976,8 @@
       traceEnd(fallback);
       box.innerHTML = '<div class="lbl">微光护老</div><div class="txt">' + esc(fallback) + '</div>';
       speak(fallback);
+      updateAgentTask(request.taskId, { status: 'failed', error: fallback });
+      renderAgentTasks();
       completeAgentRequest();
       return;
     }
@@ -2521,19 +2987,21 @@
       (WGAgent.shouldUseRemote(taskText, local) ? '正在请求大模型拆解任务…' : '本地安全规划已就绪'));
     traceStep('规划', local.goal + ' · ' + local.steps.length + ' 步');
 
-    runAgentTask(taskText, forcedPlan).then(function (run) {
+    runAgentTask(taskText, forcedPlan, request.taskId).then(function (run) {
       var meta = $('#agentPlanMeta');
       if (meta) {
         meta.textContent = (run.plan.source === 'llm' ? '大模型规划' : '本地安全规划') +
           ' · 已执行 ' + run.results.length + ' 个步骤';
       }
-      finishAgentAnswer(text, via, run, taskText, pendingInput.used);
+      finishAgentAnswer(text, via, run, taskText, pendingInput.used, request.taskId);
     }).catch(function (e) {
       var say = '刚才没有完成任务，请再说一次。其他功能还在。';
       traceStep('安全检查', 'Agent 执行失败：' + ((e && e.message) || '未知错误'));
       traceEnd(say);
       box.innerHTML = '<div class="lbl">微光 Agent</div><div class="txt">' + esc(say) + '</div>';
       speak(say);
+      updateAgentTask(request.taskId, { status: 'failed', error: (e && e.message) || say });
+      renderAgentTasks();
     }).then(function () {
       completeAgentRequest();
     });
@@ -2541,8 +3009,18 @@
 
   function answer(text, via, forcedPlan, internal) {
     if (!internal) markActive();
+    ensureAgentTasks();
+    var requestId = ++AGENT_RUN.seq;
+    var task = window.WGTaskStore ? window.WGTaskStore.create(D.agentTasks, {
+      id: 'task-' + Date.now().toString(36) + '-' + requestId,
+      goal: text,
+      status: 'queued',
+      originalText: text,
+      via: via || 'voice'
+    }) : null;
     var request = {
-      id: ++AGENT_RUN.seq,
+      id: requestId,
+      taskId: task && task.id,
       text: text,
       normalizedText: normalize(text),
       via: via,
@@ -2570,6 +3048,109 @@
     if (modal && !modal.hidden) closeAgentConfirm(false);
     setAgentMonitorStatus('acting', '正在停止当前任务', '已停止后续工具步骤，其他功能不受影响。');
     toast('正在停止', 1800);
+  }
+
+  var TASK_STATUS_TEXT = {
+    queued: '排队中',
+    running: '执行中',
+    executing: '执行工具',
+    waiting_user: '等待老人回答',
+    waiting_consent: '等待老人确认',
+    interrupted: '上次未完成',
+    handoff: '已转入后续回答',
+    abandoned: '等待已结束',
+    completed: '已完成',
+    failed: '未完成',
+    cancelled: '已停止'
+  };
+
+  function resumeStoredTask(task) {
+    if (!task || !task.goal) return;
+    ensureAgentTasks();
+    var request = {
+      id: ++AGENT_RUN.seq,
+      taskId: task.id,
+      text: task.goal,
+      normalizedText: normalize(task.goal),
+      via: 'task-resume',
+      forcedPlan: null,
+      internal: true,
+      urgent: !!(window.WGAgent && window.WGAgent.hasUrgentSignal(normalize(task.goal))),
+      pendingAtEnqueue: false,
+      at: Date.now()
+    };
+    updateAgentTask(task.id, { status: 'queued', error: '' });
+    if (AGENT_RUN.busy || AGENT_RUN.current) queueAgentRequest(request);
+    else startAgentRequest(request);
+    go('talk');
+  }
+
+  function cancelStoredTask(taskId) {
+    if (AGENT_RUN.current && AGENT_RUN.current.taskId === taskId) {
+      cancelAgentTask();
+      return;
+    }
+    AGENT_RUN.queue = AGENT_RUN.queue.filter(function (request) {
+      return request.taskId !== taskId;
+    });
+    updateAgentTask(taskId, { status: 'cancelled', currentStep: '', error: '老人取消了任务' });
+    renderAgentTasks();
+    toast('任务已经取消');
+  }
+
+  function renderAgentTasks() {
+    var box = $('#agentTasksBox');
+    if (!box) return;
+    ensureAgentTasks();
+    var tasks = window.WGTaskStore
+      ? window.WGTaskStore.recent(D.agentTasks, 8)
+      : D.agentTasks.slice(0, 8);
+    box.hidden = !tasks.length;
+    if (!tasks.length) {
+      box.innerHTML = '';
+      return;
+    }
+    var completed = tasks.filter(function (task) { return task.status === 'completed'; }).length;
+    var durations = tasks.filter(function (task) { return Number(task.durationMs) > 0; })
+      .map(function (task) { return Number(task.durationMs); });
+    var avgMs = durations.length
+      ? Math.round(durations.reduce(function (sum, value) { return sum + value; }, 0) / durations.length)
+      : 0;
+    box.innerHTML = '<div class="at-title"><b>Agent 任务</b><span>已完成 ' + completed +
+      ' / ' + tasks.length + (avgMs ? ' · 平均 ' + (avgMs / 1000).toFixed(1) + ' 秒' : '') +
+      '</span></div>' +
+      tasks.map(function (task) {
+        var canResume = task.status === 'interrupted' || task.status === 'waiting_user';
+        var canCancel = task.status === 'interrupted' ||
+          (window.WGTaskStore && window.WGTaskStore.isActive(task));
+        return '<div class="at-item">' +
+          '<div class="at-main"><b>' + esc(task.goal || '未命名任务') + '</b>' +
+          '<span class="at-status at-' + esc(task.status || 'queued') + '">' +
+            esc(TASK_STATUS_TEXT[task.status] || task.status || '未知') + '</span></div>' +
+          '<small>' + fmtTime(task.updatedAt || task.createdAt || Date.now()) +
+            (task.attempts ? ' · 第 ' + task.attempts + ' 次执行' : '') +
+            (task.toolCalls ? ' · ' + task.toolCalls + ' 个工具' : '') +
+            (task.modelCalls ? ' · ' + task.modelCalls + ' 次模型调用' : '') +
+            (task.replans ? ' · ' + task.replans + ' 次重规划' : '') +
+            (task.currentStep ? ' · ' + esc(task.currentStep) : '') +
+            (task.error ? ' · ' + esc(task.error) : '') + '</small>' +
+          (canResume || canCancel ? '<div class="at-actions">' +
+            (canResume ? '<button type="button" data-task-action="resume" data-task-id="' + esc(task.id) + '">继续</button>' : '') +
+            (canCancel ? '<button type="button" data-task-action="cancel" data-task-id="' + esc(task.id) + '">取消</button>' : '') +
+          '</div>' : '') +
+        '</div>';
+      }).join('');
+  }
+
+  function recoverInterruptedTasks() {
+    if (!window.WGTaskStore) return;
+    var recovered = window.WGTaskStore.recoverInterrupted(ensureAgentTasks());
+    if (recovered.length) {
+      save();
+      setAgentMonitorStatus('monitor', '上次有任务未完成',
+        '可以在“Agent 决策台 → Agent 任务”里继续或取消。');
+    }
+    renderAgentTasks();
   }
 
   function esc(s) {
@@ -3111,6 +3692,17 @@
         .sort(function (a, b) { return a.at - b.at; })
         .slice(0, 10)
         .map(function (e) { return { at: e.at, text: e.text }; }),
+      recurringGoals: D.events.filter(function (e) {
+        return e.recurrence && e.at >= Date.now() - 48 * 3600000;
+      }).slice(0, 20).map(function (e) {
+        return {
+          id: e.id,
+          at: e.at,
+          text: e.text,
+          recurrence: e.recurrence,
+          notifiedAt: e.notifiedAt || 0
+        };
+      }),
       weather: WEATHER.data ? {
         place: WEATHER.place,
         text: wtext(WEATHER.data.code),
@@ -4478,6 +5070,7 @@
   function renderTrace() {
     var box = $('#traceList');
     if (!box) return;
+    renderAgentTasks();
     var list = D.traces || [];
     ensureAgentMemory();
     var memoryBox = $('#agentMemoryBox');
@@ -4491,7 +5084,9 @@
           ' 条 · 最近对话 ' + turns.length + ' 轮</span></div>' +
           (facts.length
             ? '<ul>' + facts.slice(0, 4).map(function (f) {
-                return '<li>记住：' + esc(f.text) + '</li>';
+                return '<li><span>' + esc(f.text) + '</span>' +
+                  '<small>' + esc(f.category || 'fact') + '</small>' +
+                  '<button type="button" data-memory-del="' + esc(f.id) + '">删除</button></li>';
               }).join('') + '</ul>'
             : '<p>还没有长期记忆。对 Agent 说“记住……”即可写入。</p>') +
           (turns.length
@@ -5266,6 +5861,32 @@
     $('#btnAgentConfirm').addEventListener('click', function () { closeAgentConfirm(true); });
     $('#btnAgentCancel').addEventListener('click', function () { closeAgentConfirm(false); });
     $('#btnCancelAgent').addEventListener('click', cancelAgentTask);
+    $('#agentTasksBox').addEventListener('click', function (event) {
+      var button = event.target.closest ? event.target.closest('[data-task-action]') : null;
+      if (!button) return;
+      var taskId = button.getAttribute('data-task-id');
+      var task = ensureAgentTasks().filter(function (item) { return item.id === taskId; })[0];
+      if (!task) return;
+      if (button.getAttribute('data-task-action') === 'resume') resumeStoredTask(task);
+      else cancelStoredTask(taskId);
+    });
+    $('#agentMemoryBox').addEventListener('click', function (event) {
+      var button = event.target.closest ? event.target.closest('[data-memory-del]') : null;
+      if (!button) return;
+      var id = button.getAttribute('data-memory-del');
+      ensureAgentMemory();
+      var index = D.agentMemory.facts.findIndex(function (fact) { return fact.id === id; });
+      if (index < 0) return;
+      var removed = D.agentMemory.facts.splice(index, 1)[0];
+      save();
+      renderTrace();
+      toast('已删除一条记忆', 7000, '撤销', function () {
+        D.agentMemory.facts.splice(Math.min(index, D.agentMemory.facts.length), 0, removed);
+        save();
+        renderTrace();
+        toast('记忆已经恢复');
+      });
+    });
     document.addEventListener('keydown', function (e) {
       var confirmModal = $('#agentConfirmModal');
       if (e.key === 'Escape' && confirmModal && !confirmModal.hidden) {
@@ -5397,6 +6018,7 @@
     initWeatherScene();
     renderWeather();
     startAgentMonitor();
+    recoverInterruptedTasks();
     // 恢复上次的活动时间；没有记录就当作从现在开始
     ACTIVITY.last = D.lastActiveAt || Date.now();
     if (!D.lastActiveAt) { D.lastActiveAt = ACTIVITY.last; save(); }

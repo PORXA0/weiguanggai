@@ -27,10 +27,13 @@ assert(appSource.includes('AGENT_RUN') && appSource.includes('cancelAgentTask'),
   'Agent 必须具备单任务队列和停止能力');
 assert(indexSource.indexOf('time-parser.js') < indexSource.indexOf('app.js'),
   '时间解析模块必须在 app.js 之前加载');
+assert(indexSource.indexOf('task-store.js') < indexSource.indexOf('app.js') &&
+  indexSource.indexOf('memory.js') < indexSource.indexOf('app.js'),
+  '任务账本和记忆模块必须在 app.js 之前加载');
 assert(appSource.includes('取消当前任务') || appSource.includes('正在停止当前任务'),
   '界面必须提供停止当前 Agent 任务的状态');
 assert(!/\balert\s*\(/.test(familySource), '家人端不应使用阻塞式 alert');
 assert(appSource.includes("action.className = 'toast-action'"),
   '删除和清空操作必须提供可撤销提示');
 
-console.log('Frontend safety tests passed:', 10);
+console.log('Frontend safety tests passed:', 11);

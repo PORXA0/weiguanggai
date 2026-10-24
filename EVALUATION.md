@@ -15,10 +15,13 @@ npm.cmd run check
 | 测试文件 | 重点 |
 | --- | --- |
 | `test-agent.js` | 紧急语义、工具白名单、敏感操作、结果真实性、追问状态 |
-| `test-agent-benchmark.js` | 48 个基础养老任务 |
+| `test-agent-benchmark.js` | 52 个基础养老任务 |
 | `test-heldout.js` | 24 个语境、否定、第三人称和 ASR 同音字场景 |
 | `test-time-parser.js` | 17 个中文时间、非法时间和歧义时间场景 |
+| `test-task-store.js` | 持久任务创建、恢复、取消和数量上限 |
+| `test-memory.js` | 相关性记忆检索、去重和删除 |
 | `test-server-events.js` | 家庭事件、服务端看护、Webhook、备份和请求边界 |
+| `test-replanner.js` | 本地 OpenAI 兼容 mock 下的动态重规划、非法参数过滤和追问兜底 |
 | `test-backup-recovery.js` | 主数据文件损坏后从 `.bak` 自动恢复 |
 | `test-frontend-safety.js` | XSS、无障碍、任务队列和脚本加载顺序 |
 | `test-ui-e2e.js` | 真实浏览器中的第三人紧急场景、歧义时间、连续任务队列和停止任务 |

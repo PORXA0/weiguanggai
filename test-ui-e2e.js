@@ -154,7 +154,7 @@ async function waitFor(fn, timeout) {
     assert(emergencyText.includes('有没有呼吸'), '第三人紧急情况应询问呼吸和意识');
     assert(emergencyButton.includes('急救中心'), '第三人紧急情况应提供 120 人工拨号按钮');
 
-    await evaluate("(()=>{const i=document.querySelector('#homeGoalInput');i.value='明天8点提醒我吃药';document.querySelector('#btnHomeGoalSend').click();return true})()");
+    await evaluate("(()=>{const i=document.querySelector('#homeGoalInput');i.value='每天8点提醒我吃药';document.querySelector('#btnHomeGoalSend').click();return true})()");
     await waitFor(function () {
       return evaluate("document.querySelector('#talkAnswer').textContent.includes('还是晚上')");
     });
@@ -165,6 +165,8 @@ async function waitFor(fn, timeout) {
     await waitFor(function () {
       return evaluate("JSON.parse(localStorage.getItem('weiguang.data.v1')).events.length > 0");
     });
+    assert(await evaluate("(()=>{const d=JSON.parse(localStorage.getItem('weiguang.data.v1'));return d.events.some(e=>e.recurrence==='daily')})()"),
+      '重复提醒必须保存重复规则');
     assert(await evaluate("(()=>{const d=JSON.parse(localStorage.getItem('weiguang.data.v1'));return d.agentMemory.pending===null})()"),
       '补充时间后必须清除待处理状态');
 
@@ -174,11 +176,27 @@ async function waitFor(fn, timeout) {
       var count = await evaluate("JSON.parse(localStorage.getItem('weiguang.data.v1')).agentMemory.turns.length");
       return count >= beforeTurns + 2;
     }, 10000);
+    assert(await evaluate("JSON.parse(localStorage.getItem('weiguang.data.v1')).agentTasks.length >= 4"),
+      'Agent 任务必须持久化到任务账本');
 
     await evaluate("(()=>{const i=document.querySelector('#homeGoalInput');i.value='看看天气';document.querySelector('#btnHomeGoalSend').click();document.querySelector('#btnCancelAgent').click();return true})()");
     await waitFor(function () {
       return evaluate("document.querySelector('#agentMonitorStatus').textContent.includes('已停止')");
     });
+    assert(await evaluate("(()=>{const d=JSON.parse(localStorage.getItem('weiguang.data.v1'));return d.agentTasks.some(t=>t.status==='cancelled')})()"),
+      '停止任务后必须写入 cancelled 状态');
+
+    var persistedTaskCount = await evaluate("JSON.parse(localStorage.getItem('weiguang.data.v1')).agentTasks.length");
+    await evaluate("location.reload(); true");
+    await waitFor(function () {
+      return evaluate("document.readyState === 'complete' && !!document.querySelector('#agentTasksBox')");
+    }, 10000);
+    await sleep(500);
+    assert.strictEqual(
+      await evaluate("JSON.parse(localStorage.getItem('weiguang.data.v1')).agentTasks.length"),
+      persistedTaskCount,
+      '刷新页面后任务账本必须保留'
+    );
 
     console.log('UI E2E tests passed');
   } finally {

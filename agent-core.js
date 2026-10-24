@@ -78,6 +78,26 @@
       description: '把一句话中的时间和事项保存为日程提醒。',
       risk: 'sensitive'
     },
+    list_reminders: {
+      label: '查看日程',
+      description: '读取近期尚未开始或尚未处理的日程提醒。',
+      risk: 'safe'
+    },
+    update_reminder: {
+      label: '修改日程',
+      description: '修改已有提醒的时间和事项，必须由老人明确要求。',
+      risk: 'sensitive'
+    },
+    cancel_reminder: {
+      label: '取消日程',
+      description: '取消已有提醒，必须由老人明确要求。',
+      risk: 'sensitive'
+    },
+    create_recurring_reminder: {
+      label: '创建重复提醒',
+      description: '创建每天或每个工作日重复的提醒。',
+      risk: 'sensitive'
+    },
     remember_fact: {
       label: '写入长期记忆',
       description: '记住老人明确要求长期保留的偏好或事实。',
@@ -98,6 +118,100 @@
       description: '没有本地工具可用时，用简短、温和、非诊断性的语言回答。',
       risk: 'safe'
     }
+  };
+
+  var TOOL_SCHEMAS = {
+    get_time: { properties: {}, required: [] },
+    get_weather: { properties: {}, required: [] },
+    get_medication_schedule: { properties: {}, required: [] },
+    get_medication_status: { properties: {}, required: [] },
+    check_fraud: { properties: { text: { type: 'string', maxLength: 500 } }, required: [] },
+    find_contact: { properties: { name: { type: 'string', maxLength: 20 } }, required: [] },
+    prepare_call: { properties: { name: { type: 'string', maxLength: 20 } }, required: [] },
+    prepare_emergency_call: { properties: {}, required: [] },
+    notify_family: {
+      properties: {
+        kind: { type: 'string', maxLength: 12 },
+        reason: { type: 'string', maxLength: 500 },
+        eventId: { type: 'string', maxLength: 80 }
+      },
+      required: []
+    },
+    get_care_status: { properties: {}, required: [] },
+    get_location: { properties: {}, required: [] },
+    create_reminder: {
+      properties: {
+        text: { type: 'string', maxLength: 300 },
+        reminderId: { type: 'string', maxLength: 80 },
+        query: { type: 'string', maxLength: 80 }
+      },
+      required: ['text']
+    },
+    list_reminders: { properties: {}, required: [] },
+    update_reminder: {
+      properties: {
+        reminderId: { type: 'string', maxLength: 80 },
+        query: { type: 'string', maxLength: 80 },
+        text: { type: 'string', maxLength: 300 }
+      },
+      required: []
+    },
+    cancel_reminder: {
+      properties: {
+        reminderId: { type: 'string', maxLength: 80 },
+        query: { type: 'string', maxLength: 80 }
+      },
+      required: []
+    },
+    create_recurring_reminder: {
+      properties: {
+        text: { type: 'string', maxLength: 300 },
+        recurrence: { type: 'string', enum: ['daily', 'weekdays'], maxLength: 12 }
+      },
+      required: ['text']
+    },
+    remember_fact: {
+      properties: {
+        text: { type: 'string', maxLength: 160 },
+        category: { type: 'string', enum: ['preference', 'fact', 'care'], maxLength: 20 }
+      },
+      required: ['text']
+    },
+    open_page: {
+      properties: {
+        page: {
+          type: 'string',
+          enum: ['home', 'talk', 'fraud', 'med', 'contacts', 'plan', 'nav', 'health', 'records', 'settings', 'trace', 'route'],
+          maxLength: 20
+        },
+        query: { type: 'string', maxLength: 200 }
+      },
+      required: []
+    },
+    ask_user: {
+      properties: {
+        question: { type: 'string', maxLength: 300 },
+        slot: { type: 'string', maxLength: 30 },
+        resumeTool: { type: 'string', maxLength: 40 }
+      },
+      required: ['question']
+    },
+    converse: {
+      properties: { prompt: { type: 'string', maxLength: 500 } },
+      required: ['prompt']
+    }
+  };
+
+  var TOOL_EFFECTS = {
+    notify_family: { sideEffect: 'write', idempotency: 'required', verify: 'family-event-id' },
+    create_reminder: { sideEffect: 'write', idempotency: 'required', verify: 'reminder-id' },
+    update_reminder: { sideEffect: 'write', idempotency: 'required', verify: 'reminder-id' },
+    cancel_reminder: { sideEffect: 'write', idempotency: 'required', verify: 'reminder-absent' },
+    create_recurring_reminder: { sideEffect: 'write', idempotency: 'required', verify: 'reminder-id' },
+    remember_fact: { sideEffect: 'write', idempotency: 'required', verify: 'memory-id' },
+    prepare_call: { sideEffect: 'prepare', idempotency: 'none', verify: 'phone-present' },
+    prepare_emergency_call: { sideEffect: 'prepare', idempotency: 'none', verify: 'phone-present' },
+    get_location: { sideEffect: 'read-sensitive', idempotency: 'none', verify: 'coordinate-present' }
   };
 
   /*
@@ -150,7 +264,11 @@
   var CARE_RE = /平安|活动|动静|走失|离开范围|在哪里|位置/;
   var REMEMBER_RE = /^(?:请)?记住|以后都|以后要|我喜欢|我不喜欢|别忘了我/;
   var REMINDER_RE = /提醒我|叫我|安排一下|记一下|到时间/;
-  var TIME_RE = /(今天|明天|后天|大后天|上午|中午|下午|晚上|凌晨|\d{1,2}\s*点|\d{1,2}[:：]\d{1,2}|\d+\s*分钟|\d+\s*小时)/;
+  var REMINDER_LIST_RE = /(?:我|看看|查查|告诉我).{0,8}(?:有什么|有哪些|什么).{0,6}(?:安排|日程|提醒)|(?:安排|日程|提醒).{0,4}(?:有哪些|有什么)/;
+  var REMINDER_CANCEL_RE = /(?:取消|删掉|删除|不要了).{0,20}(?:提醒|安排|日程)|(?:提醒|安排|日程).{0,10}(?:取消|删掉|删除)/;
+  var REMINDER_UPDATE_RE = /(?:提醒|安排|日程).{0,20}(?:改到|改成|调整到|修改)|把.{0,20}(?:提醒|安排|日程).{0,20}(?:改到|改成)/;
+  var RECURRING_RE = /每天|天天|每个工作日|工作日/;
+  var TIME_RE = /(今天|明天|后天|大后天|上午|中午|下午|晚上|凌晨|\d{1,2}\s*点|[一二两三四五六七八九十]+\s*点|\d{1,2}[:：]\d{1,2}|\d+\s*分钟|\d+\s*小时)/;
   var CALL_RE = /打电话|打个电话|联系|拨给|找一下/;
   var NAV_RE = /我要去|怎么去|带我去|导航到|路线/;
 
@@ -235,6 +353,40 @@
   function isToolName(name) {
     return typeof name === 'string' &&
       Object.prototype.hasOwnProperty.call(TOOLS, name);
+  }
+
+  function validateToolArgs(name, input) {
+    if (!isToolName(name)) return { ok: false, args: {}, error: '未知工具' };
+    var schema = TOOL_SCHEMAS[name] || { properties: {}, required: [] };
+    var source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+    var out = {};
+    var properties = schema.properties || {};
+    var invalid = '';
+    Object.keys(properties).forEach(function (key) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) return;
+      var rule = properties[key];
+      var value = source[key];
+      if (rule.type === 'string') {
+        if (typeof value !== 'string' && typeof value !== 'number') {
+          invalid = '参数类型错误：' + key;
+          return;
+        }
+        value = String(value).trim().slice(0, rule.maxLength || 500);
+        if (rule.enum && rule.enum.indexOf(value) < 0) {
+          invalid = '参数值不在允许范围：' + key;
+          return;
+        }
+        out[key] = value;
+      }
+    });
+    if (invalid) return { ok: false, args: out, error: invalid };
+    var missing = (schema.required || []).filter(function (key) {
+      return !Object.prototype.hasOwnProperty.call(out, key) || out[key] === '';
+    });
+    if (missing.length) {
+      return { ok: false, args: out, error: '缺少参数：' + missing.join('、') };
+    }
+    return { ok: true, args: out, error: '' };
   }
 
   function makePlan(goal, risk, steps, source, extra) {
@@ -336,6 +488,53 @@
       });
     }
 
+    if (REMINDER_LIST_RE.test(text)) {
+      goal = '查看近期日程提醒';
+      addStep(steps, 'list_reminders', {}, '读取尚未过期的日程');
+      return makePlan(goal, risk, steps, 'local');
+    }
+
+    if (REMINDER_CANCEL_RE.test(text)) {
+      goal = '取消老人指定的日程提醒';
+      addStep(steps, 'cancel_reminder', { query: text }, '查找并取消匹配的提醒');
+      return makePlan(goal, risk, steps, 'local', {
+        safetyNotes: ['只取消老人明确提到的提醒', '取消前保留撤销入口']
+      });
+    }
+
+    if (REMINDER_UPDATE_RE.test(text)) {
+      goal = '修改老人指定的日程提醒';
+      if (!TIME_RE.test(text)) {
+        addStep(steps, 'ask_user', {
+          question: '你想把这件事改到哪一天、几点？',
+          slot: 'time',
+          resumeTool: 'update_reminder'
+        }, '缺少新的时间');
+        return makePlan(goal, risk, steps, 'local');
+      }
+      addStep(steps, 'update_reminder', { query: text, text: text }, '查找并更新提醒时间');
+      return makePlan(goal, risk, steps, 'local', {
+        safetyNotes: ['只修改老人明确指定的提醒']
+      });
+    }
+
+    if (RECURRING_RE.test(text) && /提醒|叫|安排/.test(text)) {
+      goal = '创建重复日程提醒';
+      if (!TIME_RE.test(text)) {
+        addStep(steps, 'ask_user', {
+          question: '好，你想每天几点提醒你？',
+          slot: 'time',
+          resumeTool: 'create_recurring_reminder'
+        }, '重复提醒缺少具体时间');
+        return makePlan(goal, risk, steps, 'local');
+      }
+      addStep(steps, 'create_recurring_reminder', {
+        text: text,
+        recurrence: /工作日/.test(text) ? 'weekdays' : 'daily'
+      }, '保存重复提醒');
+      return makePlan(goal, risk, steps, 'local');
+    }
+
     if (FRAUD_RE.test(text) && !/为什么|什么是|怎么识别/.test(text)) {
       goal = '判断诈骗风险并给出行动建议';
       addStep(steps, 'check_fraud', { text: text }, '分析对方的话里有哪些高风险话术');
@@ -403,7 +602,11 @@
 
     if (REMEMBER_RE.test(text)) {
       goal = '写入老人主动要求保留的记忆';
-      addStep(steps, 'remember_fact', { text: text }, '保存偏好或重要事实');
+      addStep(steps, 'remember_fact', {
+        text: text,
+        category: /喜欢|不喜欢|偏好|口味|习惯/.test(text) ? 'preference'
+          : (/药|健康|病|医生|疼痛/.test(text) ? 'care' : 'fact')
+      }, '保存偏好或重要事实');
       return makePlan(goal, risk, steps, 'local', {
         safetyNotes: ['只保存老人明确要求记住的内容']
       });
@@ -486,10 +689,19 @@
       var name = typeof s === 'string' ? s : s.tool;
       if (!isToolName(name)) return;
       var args = (s && typeof s === 'object' && s.args && typeof s.args === 'object') ? s.args : {};
+      if (!args.text && (name === 'create_reminder' || name === 'remember_fact' ||
+          name === 'create_recurring_reminder')) {
+        args = Object.assign({}, args, { text: cleanText(rawText) });
+      }
+      if (!args.prompt && name === 'converse') {
+        args = Object.assign({}, args, { prompt: cleanText(rawText) });
+      }
+      var checked = validateToolArgs(name, args);
+      if (!checked.ok) return;
       var meta = TOOLS[name];
       steps.push({
         tool: name,
-        args: args,
+        args: checked.args,
         purpose: String(s.purpose || meta.description).slice(0, 120),
         risk: meta.risk,
         requiresConfirmation: meta.risk === 'sensitive'
@@ -557,6 +769,11 @@
     }
     if (tool === 'remember_fact') return /记住|以后都|以后要|别忘了我/.test(text);
     if (tool === 'create_reminder') return /提醒我|叫我|安排一下|记一下|到时间/.test(text);
+    if (tool === 'update_reminder') return REMINDER_UPDATE_RE.test(text);
+    if (tool === 'cancel_reminder') return REMINDER_CANCEL_RE.test(text);
+    if (tool === 'create_recurring_reminder') {
+      return /每天|天天|每个工作日/.test(text) && /提醒|叫|安排/.test(text);
+    }
     return false;
   }
 
@@ -795,7 +1012,9 @@
         name: name,
         label: TOOLS[name].label,
         description: TOOLS[name].description,
-        risk: TOOLS[name].risk
+        risk: TOOLS[name].risk,
+        inputSchema: TOOL_SCHEMAS[name] || { properties: {}, required: [] },
+        effect: TOOL_EFFECTS[name] || { sideEffect: 'read', idempotency: 'none', verify: 'none' }
       };
     });
   }
@@ -818,6 +1037,7 @@
     contactNameFrom: contactNameFrom,
     cleanText: cleanText,
     normalizeText: normalizeText,
+    validateToolArgs: validateToolArgs,
     composeGroundedAnswer: composeGroundedAnswer
   };
 });
