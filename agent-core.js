@@ -99,9 +99,9 @@
   var DISCOMFORT_RE = /不舒服|难受|头晕|恶心|没力气|疼得厉害|发烧/;
   var HYPOTHETICAL_RE = /如果|假如|万一|要是/;
   var FRAUD_RE = /骗子|诈骗|骗人|安全账户|转钱|转账|洗钱|验证码|中奖|退款|冒充|公检法|保密/;
-  var MED_RE = /吃药|吃过药|药吃了|药吃过|用药|药没吃|药物|降压药/;
+  var MED_RE = /吃什么药|吃哪些药|吃药|吃过药|药吃了|药吃过|用药|药没吃|药物|降压药/;
   var WEATHER_RE = /天气|下雨|下雨吗|气温|冷不冷|热不热|穿什么/;
-  var CARE_RE = /平安|活动|没动静|走失|离开范围|在哪里|位置/;
+  var CARE_RE = /平安|活动|动静|走失|离开范围|在哪里|位置/;
   var REMEMBER_RE = /^(?:请)?记住|以后都|以后要|我喜欢|我不喜欢|别忘了我/;
   var REMINDER_RE = /提醒我|叫我|安排一下|记一下|到时间/;
   var TIME_RE = /(今天|明天|后天|大后天|上午|中午|下午|晚上|凌晨|\d{1,2}\s*点|\d{1,2}[:：]\d{1,2}|\d+\s*分钟|\d+\s*小时)/;
@@ -309,6 +309,7 @@
     if (!localPlan) return true;
     if (localPlan.risk === 'urgent') return false;
     if (localPlan.needsPlanner) return true;
+    if (/吃药|吃过药|服药|服药过/.test(t) && /如果|要是|没吃就|没服就/.test(t)) return true;
     if (/先.+再|然后|顺便|同时|并且|帮我处理|规划一下|安排一下/.test(t) && localPlan.steps.length >= 1) {
       return true;
     }
@@ -412,6 +413,149 @@
     return { text: text, used: false, expired: false };
   }
 
+  /* 独立安全 Agent：对完整计划给出审核结论，而不是只做字符串拦截。 */
+  function safetyReview(plan, rawText) {
+    var findings = [];
+    var confirmations = [];
+    var enforced = [];
+    if (!plan || !Array.isArray(plan.steps)) {
+      return {
+        agent: 'safety-agent',
+        decision: 'block',
+        risk: 'urgent',
+        findings: ['计划结构无效'],
+        confirmations: [],
+        enforced: []
+      };
+    }
+    plan.steps.forEach(function (s) {
+      if (!TOOLS[s.tool]) findings.push('未知工具：' + s.tool);
+      if (s.requiresConfirmation && !authorizeSensitive(s, rawText, plan)) {
+        confirmations.push(TOOLS[s.tool].label);
+      }
+      if (s.tool === 'prepare_call') enforced.push('拨号必须由老人本人确认');
+    });
+    if (hasUrgentSignal(rawText)) {
+      if (!plan.steps.some(function (s) { return s.tool === 'notify_family'; })) {
+        findings.push('高风险请求缺少家人通知');
+      }
+      if (!plan.steps.some(function (s) { return s.tool === 'prepare_call'; })) {
+        findings.push('高风险请求缺少拨号准备');
+      }
+    }
+    return {
+      agent: 'safety-agent',
+      decision: findings.length ? 'needs-repair' : (confirmations.length ? 'needs-confirmation' : 'approve'),
+      risk: plan.risk,
+      findings: findings,
+      confirmations: confirmations,
+      enforced: enforced
+    };
+  }
+
+  /* 根据工具失败结果调整计划。失败不是简单跳过，
+     而是把“观察到的新事实”变成下一步行动。 */
+  function replanAfterFailure(plan, failedStep, result, rawText) {
+    var tool = failedStep && failedStep.tool;
+    var message = String((result && result.text) || '').trim();
+    if (tool === 'get_weather') {
+      return {
+        strategy: 'continue',
+        reason: '天气工具不可用，保留原目标并继续执行不依赖天气的步骤',
+        steps: []
+      };
+    }
+    if (tool === 'find_contact') {
+      return {
+        strategy: 'ask-user',
+        reason: '没有找到可用联系人，需要老人或家人补充号码',
+        steps: [step('ask_user', {
+          question: '我没有找到可以联系的家人。请先让家人帮你保存一个电话号码。'
+        }, '补充缺失的联系人')]
+      };
+    }
+    if (tool === 'create_reminder') {
+      return {
+        strategy: 'ask-user',
+        reason: '提醒写入失败或时间不完整，需要重新确认时间',
+        steps: [step('ask_user', {
+          question: '这件事还没有保存成功。请再告诉我一次具体是哪一天、几点。'
+        }, '重新确认提醒时间')]
+      };
+    }
+    if (tool === 'notify_family') {
+      return {
+        strategy: 'fallback-call',
+        reason: '家人端通知失败，改为准备直接拨号',
+        steps: [
+          step('find_contact', { name: contactNameFrom(rawText) || '家人' }, '重新查找紧急联系人'),
+          step('prepare_call', { name: contactNameFrom(rawText) || '家人' }, '准备人工确认的拨号')
+        ]
+      };
+    }
+    if (tool === 'get_location') {
+      return {
+        strategy: 'continue',
+        reason: '定位不可用，继续使用已有活动和告警信息',
+        steps: []
+      };
+    }
+    return message ? {
+      strategy: 'continue',
+      reason: '工具失败但任务仍可继续：' + message.slice(0, 80),
+      steps: []
+    } : null;
+  }
+
+  /* 后台主动关怀计划。Agent 不是只等用户输入，而是在检测到信号后主动发起。 */
+  function planProactive(signal) {
+    signal = signal || {};
+    if (signal.type === 'inactive') {
+      return makePlan('主动确认长时间无活动的老人是否安全', 'caution', [
+        step('get_care_status', {}, '读取无活动时长和位置状态'),
+        step('ask_user', {
+          question: '你已经有' + (signal.hours || '较长时间') + '没有动静了。现在还好吗？请回我一句话。'
+        }, '主动询问老人状态')
+      ], 'proactive-agent', {
+        safetyNotes: ['先主动询问，不立即打扰家人', '未回应后再升级协同']
+      });
+    }
+    if (signal.type === 'medication') {
+      return makePlan('主动确认漏服药物情况', 'caution', [
+        step('get_medication_status', {}, '核对待完成的用药'),
+        step('ask_user', {
+          question: signal.question || '该吃的药还没有打卡，现在方便吃药吗？'
+        }, '提醒老人确认用药状态')
+      ], 'proactive-agent', {
+        safetyNotes: ['不提供剂量和诊断建议']
+      });
+    }
+    if (signal.type === 'event') {
+      return makePlan('主动提醒临近日程', 'normal', [
+        step('ask_user', {
+          question: signal.question || '快到安排时间了，需要我帮你准备吗？'
+        }, '主动确认日程准备情况')
+      ], 'proactive-agent');
+    }
+    return null;
+  }
+
+  function buildProactiveEscalation(signal) {
+    signal = signal || {};
+    if (signal.type !== 'inactive') return null;
+    return makePlan('老人未回应主动询问，升级为家庭协同', 'urgent', [
+      step('get_care_status', {}, '再次确认最新平安状态'),
+      step('find_contact', { name: '家人' }, '查找紧急联系人'),
+      step('notify_family', {
+        kind: '高风险',
+        reason: signal.reason || '老人长时间无活动且未回应Agent询问'
+      }, '把未回应事件通知家人'),
+      step('prepare_call', { name: '家人' }, '准备人工确认的拨号')
+    ], 'proactive-agent', {
+      safetyNotes: ['老人未回应后升级家人协同', '拨号仍需人工确认']
+    });
+  }
+
   function toolCatalog() {
     return Object.keys(TOOLS).map(function (name) {
       return {
@@ -431,6 +575,10 @@
     enforceSafety: enforceSafety,
     authorizeSensitive: authorizeSensitive,
     mergePendingInput: mergePendingInput,
+    safetyReview: safetyReview,
+    replanAfterFailure: replanAfterFailure,
+    planProactive: planProactive,
+    buildProactiveEscalation: buildProactiveEscalation,
     shouldUseRemote: shouldUseRemote,
     hasUrgentSignal: hasUrgentSignal,
     contactNameFrom: contactNameFrom,

@@ -68,4 +68,34 @@ var unsafeModelPlan = agent.normalizePlan({
 assert.strictEqual(unsafeModelPlan.risk, 'urgent');
 assert(tools(unsafeModelPlan).indexOf('notify_family') >= 0, '模型漏掉安全步骤时必须补齐');
 
-console.log('Agent core tests passed:', 12);
+var review = agent.safetyReview(unsafeModelPlan, '我摔倒了，起不来');
+assert.strictEqual(review.agent, 'safety-agent');
+assert.strictEqual(review.decision, 'approve', '补齐后的高风险计划应通过安全 Agent');
+
+var weatherFailure = agent.replanAfterFailure(
+  weather,
+  { tool: 'get_weather' },
+  { ok: false, text: '天气服务不可用' },
+  '看看天气，然后提醒我下午去公园'
+);
+assert.strictEqual(weatherFailure.strategy, 'continue');
+assert.strictEqual(weatherFailure.steps.length, 0);
+
+var contactFailure = agent.replanAfterFailure(
+  urgent,
+  { tool: 'find_contact' },
+  { ok: false, text: '没有联系人' },
+  '我不舒服'
+);
+assert.strictEqual(contactFailure.strategy, 'ask-user');
+assert.deepStrictEqual(tools(contactFailure), ['ask_user']);
+
+var proactive = agent.planProactive({ type: 'inactive', hours: '8小时' });
+assert.strictEqual(proactive.source, 'proactive-agent');
+assert(tools(proactive).indexOf('ask_user') >= 0);
+
+var escalation = agent.buildProactiveEscalation({ type: 'inactive', reason: '未回应' });
+assert.strictEqual(escalation.risk, 'urgent');
+assert(tools(escalation).indexOf('notify_family') >= 0);
+
+console.log('Agent core tests passed:', 19);

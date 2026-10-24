@@ -16,7 +16,7 @@
   var server = '';
   var timer = null;
   var lastState = null;
-  var pairConfirmed = false;
+  var pairConfirmed = true;  /* 公网演示版：跳过配对，默认已确认 */
 
   function getParam(name) {
     var m = new RegExp('[?&]' + name + '=([^&#]*)').exec(location.search);

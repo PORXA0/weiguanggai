@@ -28,6 +28,7 @@ var PREFERRED_DATA_DIR = path.join(os.homedir(), 'Documents', 'Codex', '.weiguan
 var DATA_DIR = process.env.WEIGUANG_DATA_DIR || PREFERRED_DATA_DIR;
 var HIGH_ESCALATE_MS = Number(process.env.WEIGUANG_HIGH_ESCALATE_MS) || 3 * 60 * 1000;
 var NORMAL_ESCALATE_MS = Number(process.env.WEIGUANG_NORMAL_ESCALATE_MS) || 10 * 60 * 1000;
+var AUTH_MODE = String(process.env.WEIGUANG_AUTH_MODE || 'open').toLowerCase();
 try {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 } catch (e) {
@@ -114,6 +115,8 @@ function safeTokenEqual(value) {
 }
 
 function hasAuth(req) {
+  /* 公网演示默认保持当前免配对模式；设置为 paired 后启用家庭令牌校验。 */
+  if (AUTH_MODE === 'open') return true;
   var cookies = parseCookies(req);
   var header = req.headers['x-weiguang-token'];
   return safeTokenEqual(cookies.wg_auth || header);
@@ -647,11 +650,14 @@ function llmPlan(text, context) {
   });
 }
 
-/* 地图导航：高德 Web 服务 API（服务端代理，密钥不下发前端） */
+/* 地图导航：高德 Web 服务 API（服务端代理，密钥不下发前端）
+   密钥来源：1) 项目外私有配置 map.key；2) 部署平台环境变量 AMAP_KEY（公开仓库推荐用这个） */
 var mapConfig = null;
 try {
-  if (APP_CONFIG.map && APP_CONFIG.map.key && String(APP_CONFIG.map.key).indexOf('在这里') < 0) {
+  if (APP_CONFIG && APP_CONFIG.map && APP_CONFIG.map.key && String(APP_CONFIG.map.key).indexOf('在这里') < 0) {
     mapConfig = APP_CONFIG.map;
+  } else if (process.env.AMAP_KEY) {
+    mapConfig = { provider: 'amap', key: String(process.env.AMAP_KEY) };
   }
 } catch (e) {}
 
@@ -875,6 +881,7 @@ function handle(req, res) {
       stateAt: stateAt,
       configReady: !!APP_CONFIG,
       configExternal: !!APP_CONFIG_FILE && path.dirname(APP_CONFIG_FILE) !== __dirname,
+      authMode: AUTH_MODE,
       voiceReady: !!voiceConfig,
       llmReady: !!llmConfig,
       agentReady: !!llmConfig,
@@ -1205,7 +1212,7 @@ function handle(req, res) {
   }
 
   /* ---------- 静态文件 ---------- */
-  if (req.method === 'GET' && (p === '/' || /\.html$/i.test(p)) && isLoopbackRequest(req)) {
+  if (req.method === 'GET' && (p === '/' || /\.html$/i.test(p))) {
     setAuthCookie(req, res);
   }
   serveStatic(req, res, p);

@@ -20,7 +20,8 @@ var sleep = function (ms) {
       HTTP_ONLY: '1',
       PORT: String(port),
       WEIGUANG_DATA_DIR: dataDir,
-      WEIGUANG_HIGH_ESCALATE_MS: '150'
+      WEIGUANG_HIGH_ESCALATE_MS: '150',
+      WEIGUANG_AUTH_MODE: 'paired'
     }),
     stdio: 'ignore'
   });

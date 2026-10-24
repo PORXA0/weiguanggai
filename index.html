@@ -48,26 +48,53 @@
         <div class="ws-flash"></div>
       </div>
 
-      <div class="home-hello">
-        <p class="hh-line" id="greet">今天也要好好照顾自己</p>
-        <div class="hh-time" id="bigClock">--:--</div>
-        <p class="hh-date" id="bigDate">--</p>
-      </div>
+      <div class="home-layout">
+        <div class="home-primary">
+          <div class="home-hello">
+            <p class="hh-line" id="greet">今天也要好好照顾自己</p>
+            <div class="hh-time" id="bigClock">--:--</div>
+            <p class="hh-date" id="bigDate">--</p>
+          </div>
 
-      <!-- 首页只留这一个按钮：按住说话，说完松手 -->
-      <button class="mic-btn home-mic" id="btnHomeTalk" type="button">
-        <span class="mic-ring" aria-hidden="true"></span>
-        <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
-          <path d="M20 6a6 6 0 0 1 6 6v8a6 6 0 0 1-12 0v-8a6 6 0 0 1 6-6Z" stroke="currentColor" stroke-width="2.6"/>
-          <path d="M10 19v1a10 10 0 0 0 20 0v-1M20 30v5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
-        </svg>
-        <b id="homeMicLabel">按住跟我说话</b>
-      </button>
-      <p class="home-mic-hint" id="homeMicHint">AI Agent 会自己拆步骤：查药、防骗、看平安状态、通知家人</p>
-      <button class="home-weather-pill" id="homeWeatherPill" type="button">
-        <span class="hwp-icon" id="homeWeatherPillIcon">🌤️</span>
-        <span id="homeWeatherPillText">正在同步天气</span>
-      </button>
+          <section class="agent-command" id="agentCommand">
+            <div class="agent-command-head">
+              <span class="agent-orb" aria-hidden="true"><i></i></span>
+              <div>
+                <b>微光 Agent</b>
+                <span id="agentMonitorStatus">正在观察家庭状态</span>
+              </div>
+              <button class="agent-trace-link" id="btnHomeAgentTrace" type="button">查看过程</button>
+            </div>
+            <p class="agent-monitor-text" id="agentMonitorText">我会持续关注用药、活动和平安状态；发现异常时会主动询问你。</p>
+            <div class="agent-goal-input">
+              <input id="homeGoalInput" type="text" autocomplete="off" placeholder="说出今天想完成的事，例如：明早去医院复查">
+              <button id="btnHomeGoalSend" type="button">交给Agent</button>
+            </div>
+            <div class="agent-goal-chips">
+              <button type="button" data-agent-goal="我不舒服，帮我检查平安状态并通知家人">我不舒服</button>
+              <button type="button" data-agent-goal="先看看天气，然后明天下午三点提醒我去公园">安排出行</button>
+              <button type="button" data-agent-goal="我今天吃过药了吗">核对用药</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="home-voice-panel">
+          <!-- 语音是首页的主行动入口 -->
+          <button class="mic-btn home-mic" id="btnHomeTalk" type="button">
+            <span class="mic-ring" aria-hidden="true"></span>
+            <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
+              <path d="M20 6a6 6 0 0 1 6 6v8a6 6 0 0 1-12 0v-8a6 6 0 0 1 6-6Z" stroke="currentColor" stroke-width="2.6"/>
+              <path d="M10 19v1a10 10 0 0 0 20 0v-1M20 30v5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+            </svg>
+            <b id="homeMicLabel">按住跟我说话</b>
+          </button>
+          <p class="home-mic-hint" id="homeMicHint">说出来就好，Agent 会自己拆步骤、调用工具并联系家人</p>
+          <button class="home-weather-pill" id="homeWeatherPill" type="button">
+            <span class="hwp-icon" id="homeWeatherPillIcon">🌤️</span>
+            <span id="homeWeatherPillText">正在同步天气</span>
+          </button>
+        </div>
+      </div>
 
       <!-- 下面这些先留着但不显示：程序里还在用它们显示天气、药量、联系人这些摘要 -->
       <div class="home-more">

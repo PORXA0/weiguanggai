@@ -42,6 +42,12 @@
       turns: [],
       pending: null
     },
+    agentMonitor: {
+      handled: {},
+      pending: null,
+      lastSignal: null,
+      cases: []
+    },
     settings: {
       dialect: 'putonghua',
       voice: 'nannan',
@@ -74,7 +80,8 @@
 
   var VIA_NAME = {
     voice: '老人说话', chip: '点按钮', nfc: '贴卡',
-    nav: '问路', report: '报平安', tool: '按钮操作', text: '文字输入'
+    nav: '问路', report: '报平安', tool: '按钮操作', text: '文字输入',
+    agent: 'Agent主动发起'
   };
 
   var INTENT_NAME = {
@@ -1394,6 +1401,41 @@
     }).catch(function () {});
   }
 
+  function pollAgentCases() {
+    ensureAgentMonitor();
+    if (!D.agentMonitor.cases.length || TRACE.cur) return;
+    var base = (D.settings.serverUrl || '').trim().replace(/\/+$/, '');
+    if (!base && /^https?:$/.test(location.protocol)) base = location.origin;
+    if (!base) return;
+    fetch(base + '/api/family/events').then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok || !Array.isArray(j.events)) return;
+      var latest = null;
+      D.agentMonitor.cases.forEach(function (item) {
+        var remote = j.events.filter(function (ev) { return ev.id === item.id; })[0];
+        if (remote) {
+          item.status = remote.status;
+          item.acknowledgedAt = remote.acknowledgedAt || null;
+          item.contactedAt = remote.contactedAt || null;
+          item.resolvedAt = remote.resolvedAt || null;
+          if (!latest || (remote.updatedAt || remote.at) > (latest.updatedAt || latest.at)) latest = remote;
+        }
+      });
+      save();
+      if (latest) {
+        if (latest.status === 'resolved') {
+          setAgentMonitorStatus('monitor', '家庭事件已完成处置',
+            '家人已经关闭事件，Agent 继续持续观察。');
+        } else if (latest.status === 'acknowledged') {
+          setAgentMonitorStatus('monitor', '家人已经查看事件', '家庭协同 Agent 正在等待电话确认。');
+        } else if (latest.status === 'contacted') {
+          setAgentMonitorStatus('monitor', '家人已电话确认', 'Agent 正在等待事件完成处置。');
+        } else if (latest.status === 'escalated') {
+          setAgentMonitorStatus('alert', '家庭事件已超时升级', '家人仍未确认，建议继续联系备用联系人。');
+        }
+      }
+    }).catch(function () {});
+  }
+
   function renderNavSummary() {
     var el = $('#navSummary');
     if (!el) return;
@@ -1783,6 +1825,30 @@
 
   var AGENT_LIVE = { plan: null, results: [] };
   var agentConfirmResolver = null;
+  var AGENT_MONITOR_TIMER = null;
+
+  function ensureAgentMonitor() {
+    if (!D.agentMonitor || typeof D.agentMonitor !== 'object') {
+      D.agentMonitor = { handled: {}, pending: null, lastSignal: null };
+    }
+    if (!D.agentMonitor.handled || typeof D.agentMonitor.handled !== 'object') {
+      D.agentMonitor.handled = {};
+    }
+    if (D.agentMonitor.pending === undefined) D.agentMonitor.pending = null;
+    if (!Array.isArray(D.agentMonitor.cases)) D.agentMonitor.cases = [];
+  }
+
+  function setAgentMonitorStatus(state, label, detail) {
+    var panel = $('#agentCommand');
+    var status = $('#agentMonitorStatus');
+    var text = $('#agentMonitorText');
+    if (panel) {
+      panel.classList.toggle('is-acting', state === 'acting' || state === 'planning');
+      panel.classList.toggle('is-alert', state === 'alert');
+    }
+    if (status) status.textContent = label || '正在观察家庭状态';
+    if (text && detail) text.textContent = detail;
+  }
 
   function ensureAgentMemory() {
     if (!D.agentMemory || typeof D.agentMemory !== 'object') {
@@ -1873,6 +1939,17 @@
     if (small && note) small.textContent = note;
   }
 
+  function appendAgentLiveStep(step, index) {
+    var list = $('#agentLiveSteps');
+    if (!list) return;
+    var li = document.createElement('li');
+    li.setAttribute('data-agent-step', String(index));
+    li.innerHTML = '<span class="as-dot"></span><b>' +
+      esc(agentMeta(step.tool).label) + '</b><small>' +
+      esc(step.purpose || '根据执行结果调整的计划') + '</small>';
+    list.appendChild(li);
+  }
+
   function remoteAgentPlan(text, localPlan) {
     return fetch('/api/agent/plan', {
       method: 'POST',
@@ -1914,9 +1991,31 @@
         at: Date.now()
       })
     }).then(function (r) { return r.json(); }).then(function (j) {
-      return j && j.ok
-        ? { ok: true, text: '求助事件已经推到家人端。' }
-        : { ok: false, text: '家人通知没有发出去。' };
+      if (j && j.ok) {
+        ensureAgentMonitor();
+        var event = j.event || {
+          id: j.id,
+          kind: kind,
+          status: 'pending',
+          at: Date.now()
+        };
+        D.agentMonitor.cases = D.agentMonitor.cases.filter(function (item) {
+          return item.id !== event.id;
+        });
+        D.agentMonitor.cases.unshift({
+          id: event.id,
+          kind: event.kind || kind,
+          status: event.status || 'pending',
+          at: event.at || Date.now(),
+          updatedAt: Date.now()
+        });
+        D.agentMonitor.cases = D.agentMonitor.cases.slice(0, 20);
+        save();
+        setAgentMonitorStatus('acting', '家庭协同 Agent 已推送事件',
+          '正在等待家人查看和确认。');
+        return { ok: true, text: '求助事件已经推到家人端，正在等待家人确认。' };
+      }
+      return { ok: false, text: '家人通知没有发出去。' };
     }).catch(function () {
       return { ok: false, text: '家人端暂时连不上。' };
     });
@@ -2111,68 +2210,105 @@
     return agentConverse(step, rawText);
   }
 
-  function runAgentTask(text) {
+  function runAgentTask(text, forcedPlan) {
     var localPlan = window.WGAgent.planLocal(text, agentContext());
-    var planPromise = window.WGAgent.shouldUseRemote(text, localPlan)
+    var planPromise = forcedPlan
+      ? Promise.resolve(forcedPlan)
+      : (window.WGAgent.shouldUseRemote(text, localPlan)
       ? remoteAgentPlan(text, localPlan).catch(function () { return localPlan; })
-      : Promise.resolve(localPlan);
+      : Promise.resolve(localPlan));
 
     return planPromise.then(function (plan) {
       plan = window.WGAgent.enforceSafety(plan, text);
-      showAgentLive(plan, (plan.source === 'llm' ? '大模型规划' : '本地安全规划') +
-        ' · 校验通过，开始执行');
+      var safety = window.WGAgent.safetyReview(plan, text);
+      showAgentLive(plan, (plan.source === 'llm' ? '大模型规划' :
+        (plan.source === 'proactive-agent' ? '主动关怀规划' : '本地安全规划')) +
+        ' · 安全 Agent 已介入');
+      traceStep('安全 Agent',
+        safety.decision === 'approve'
+          ? '批准执行，未发现越权动作'
+          : (safety.decision === 'needs-confirmation'
+            ? '需要老人确认：' + safety.confirmations.join('、')
+            : '发现风险并要求重新校验'));
+      setAgentMonitorStatus(
+        plan.risk === 'urgent' ? 'alert' : 'acting',
+        plan.risk === 'urgent' ? '安全 Agent 正在处理高风险任务' : 'Agent 正在执行任务',
+        plan.goal
+      );
       AGENT_LIVE = { plan: plan, results: [] };
       var results = [];
       var halted = false;
-      return plan.steps.reduce(function (chain, step, index) {
-        return chain.then(function () {
-          if (halted) {
-            markAgentStep(index, 'skipped', '任务已暂停，没有执行');
-            return null;
+      var queue = plan.steps.slice();
+      var cursor = 0;
+
+      function runNext() {
+        if (halted || cursor >= queue.length || cursor >= 12) return Promise.resolve();
+        var index = cursor++;
+        var step = queue[index];
+        if (step.tool === 'notify_family' && !step.args.eventId && TRACE.cur) {
+          step.args.eventId = 'evt-' + TRACE.cur.id;
+        }
+        var needsConfirm = step.requiresConfirmation &&
+          !window.WGAgent.authorizeSensitive(step, text, plan);
+        if (needsConfirm) {
+          markAgentStep(index, 'waiting', '等待老人确认…');
+          traceStep('安全检查', '等待老人确认：' + agentMeta(step.tool).label);
+        } else {
+          traceStep('调用工具', agentMeta(step.tool).label + ' · ' + step.purpose);
+        }
+        return requestAgentConfirmation(step, plan, text).then(function (allowed) {
+          if (!allowed) {
+            var cancelled = {
+              ok: false,
+              cancelled: true,
+              stop: true,
+              text: '老人没有同意这一步，Agent 已经停下。'
+            };
+            results.push({ step: step, result: cancelled });
+            AGENT_LIVE.results = results;
+            markAgentStep(index, 'failed', cancelled.text);
+            traceStep('观察', cancelled.text);
+            halted = true;
+            return;
           }
-          if (step.tool === 'notify_family' && !step.args.eventId && TRACE.cur) {
-            step.args.eventId = 'evt-' + TRACE.cur.id;
-          }
-          var needsConfirm = step.requiresConfirmation &&
-            !window.WGAgent.authorizeSensitive(step, text, plan);
           if (needsConfirm) {
-            markAgentStep(index, 'waiting', '等待老人确认…');
-            traceStep('安全检查', '等待老人确认：' + agentMeta(step.tool).label);
-          } else {
-            traceStep('调用工具', agentMeta(step.tool).label + ' · ' + step.purpose);
+            traceStep('调用工具', agentMeta(step.tool).label + ' · 老人已确认');
           }
-          return requestAgentConfirmation(step, plan, text).then(function (allowed) {
-            if (!allowed) {
-              var cancelled = {
-                ok: false,
-                cancelled: true,
-                stop: true,
-                text: '老人没有同意这一步，Agent 已经停下。'
-              };
-              results.push({ step: step, result: cancelled });
-              AGENT_LIVE.results = results;
-              markAgentStep(index, 'failed', cancelled.text);
-              traceStep('观察', cancelled.text);
-              halted = true;
-              return cancelled;
+          markAgentStep(index, 'running', '正在执行…');
+          return executeAgentTool(step, text).then(function (result) {
+            result = result || { ok: false, text: '这个工具没有返回结果。' };
+            results.push({ step: step, result: result });
+            AGENT_LIVE.results = results;
+            markAgentStep(index, result.ok ? 'done' : 'failed', result.text);
+            traceStep('观察', result.text);
+
+            if (!result.ok && !result.cancelled && !result.askUser) {
+              var recovery = window.WGAgent.replanAfterFailure(plan, step, result, text);
+              if (recovery) {
+                traceStep('反思', recovery.reason);
+                setAgentMonitorStatus('acting', 'Agent 正在调整计划', recovery.reason);
+                if (recovery.steps && recovery.steps.length) {
+                  recovery.steps.forEach(function (newStep) {
+                    if (queue.length < 12) {
+                      newStep.requiresConfirmation =
+                        window.WGAgent.TOOLS[newStep.tool].risk === 'sensitive';
+                      queue.push(newStep);
+                      appendAgentLiveStep(newStep, queue.length - 1);
+                    }
+                  });
+                }
+              }
             }
-            if (needsConfirm) {
-              traceStep('调用工具', agentMeta(step.tool).label + ' · 老人已确认');
-            }
-            markAgentStep(index, 'running', '正在执行…');
-            return executeAgentTool(step, text).then(function (result) {
-              result = result || { ok: false, text: '这个工具没有返回结果。' };
-              results.push({ step: step, result: result });
-              AGENT_LIVE.results = results;
-              markAgentStep(index, result.ok ? 'done' : 'failed', result.text);
-              traceStep('观察', result.text);
-              if (result.stop) halted = true;
-              return result;
-            });
+            if (result.stop) halted = true;
+            return result;
           });
+        }).then(function () {
+          return runNext();
         });
-      }, Promise.resolve()).then(function () {
-        return { plan: plan, results: results };
+      }
+
+      return runNext().then(function () {
+        return { plan: plan, results: results, safety: safety };
       });
     });
   }
@@ -2254,8 +2390,20 @@
         tool: /提醒|日程|安排/.test(taskText || text) ? 'create_reminder' : 'general',
         question: asked.result.text
       };
+      setAgentMonitorStatus('acting', 'Agent 正在等待你的回应', asked.result.text);
     } else if (usedPending) {
       D.agentMemory.pending = null;
+    }
+    if (!asked) {
+      var cancelledResult = run.results.filter(function (r) { return r.result.cancelled; })[0];
+      if (cancelledResult) {
+        setAgentMonitorStatus('monitor', 'Agent 已按你的要求暂停', cancelledResult.result.text);
+      } else if (run.plan.risk === 'urgent') {
+        setAgentMonitorStatus('alert', '高风险任务已完成协同', '已检查状态并处理家人通知与拨号准备。');
+      } else {
+        setAgentMonitorStatus('monitor', 'Agent 正在继续观察家庭状态',
+          '最近完成任务：' + (run.plan.goal || '老人的请求'));
+      }
     }
     D.agentMemory.turns.unshift({
       id: uid(),
@@ -2278,6 +2426,7 @@
         safetyNotes: run.plan.safetyNotes || []
       };
       TRACE.cur.tools = run.results.map(function (r) { return r.step.tool; });
+      TRACE.cur.safety = run.safety || null;
       traceStep('安全检查', run.plan.risk === 'urgent' ? '高风险请求已强制通知家人' : '未触发高风险管理');
     }
     traceEnd(spoken);
@@ -2287,10 +2436,10 @@
     speak(spoken);
   }
 
-  function answer(text, via) {
-    markActive();
+  function answer(text, via, forcedPlan, internal) {
+    if (!internal) markActive();
     traceStart(via || 'voice', text);
-    var pendingInput = resolvePendingAgentInput(text);
+    var pendingInput = internal ? { text: text, used: false } : resolvePendingAgentInput(text);
     var taskText = pendingInput.text;
     var box = $('#talkAnswer');
     box.hidden = false;
@@ -2305,11 +2454,12 @@
       return;
     }
 
-    var local = WGAgent.planLocal(taskText, agentContext());
-    showAgentLive(local, WGAgent.shouldUseRemote(taskText, local) ? '正在请求大模型拆解任务…' : '本地安全规划已就绪');
+    var local = forcedPlan || WGAgent.planLocal(taskText, agentContext());
+    showAgentLive(local, forcedPlan ? '主动 Agent 已生成关怀计划' :
+      (WGAgent.shouldUseRemote(taskText, local) ? '正在请求大模型拆解任务…' : '本地安全规划已就绪'));
     traceStep('规划', local.goal + ' · ' + local.steps.length + ' 步');
 
-    runAgentTask(taskText).then(function (run) {
+    runAgentTask(taskText, forcedPlan).then(function (run) {
       var meta = $('#agentPlanMeta');
       if (meta) {
         meta.textContent = (run.plan.source === 'llm' ? '大模型规划' : '本地安全规划') +
@@ -2919,6 +3069,12 @@
   function markActive() {
     ACTIVITY.last = Date.now();
     D.lastActiveAt = ACTIVITY.last;
+    if (D.agentMonitor && D.agentMonitor.pending &&
+        D.agentMonitor.pending.signal &&
+        D.agentMonitor.pending.signal.type === 'inactive') {
+      D.agentMonitor.pending = null;
+      setAgentMonitorStatus('monitor', 'Agent 已收到你的回应', '继续观察家庭状态。');
+    }
     saveSoon();
   }
 
@@ -2938,6 +3094,119 @@
       // 超过一半时间就提醒一下，别等到报警才发现
       warn: hours >= limit / 2 && hours < limit
     };
+  }
+
+  function collectProactiveSignal() {
+    ensureAgentMonitor();
+    var now = Date.now();
+    var info = inactiveInfo();
+    var inactiveKey = 'inactive:' + todayKey() + ':' + info.limit;
+    if (info.alert && !D.agentMonitor.handled[inactiveKey] && !D.agentMonitor.pending) {
+      return {
+        type: 'inactive',
+        key: inactiveKey,
+        hours: fmtHours(info.hours),
+        prompt: '老人已经较长时间没有活动，请主动询问是否安全。',
+        reason: '老人已有' + fmtHours(info.hours) + '没有活动'
+      };
+    }
+    var upcoming = (D.events || []).filter(function (ev) {
+      var diff = ev.at - now;
+      return diff > 5 * 60 * 1000 && diff <= 45 * 60 * 1000;
+    }).sort(function (a, b) { return a.at - b.at; })[0];
+    if (upcoming) {
+      var eventKey = 'event:' + upcoming.id;
+      if (!D.agentMonitor.handled[eventKey] && !D.agentMonitor.pending) {
+        var minutes = Math.max(1, Math.round((upcoming.at - now) / 60000));
+        return {
+          type: 'event',
+          key: eventKey,
+          event: upcoming,
+          minutes: minutes,
+          prompt: '快到日程时间了，请主动确认老人是否需要准备。',
+          question: '还有' + minutes + '分钟就要' + upcoming.text + '了，需要我帮你准备吗？'
+        };
+      }
+    }
+    return null;
+  }
+
+  function startProactiveSignal(signal) {
+    if (!signal || !window.WGAgent || D.agentMonitor.pending) return;
+    var plan = WGAgent.planProactive(signal);
+    if (!plan) return;
+    plan.signal = signal;
+    ensureAgentMonitor();
+    D.agentMonitor.handled[signal.key] = Date.now();
+    D.agentMonitor.lastSignal = signal;
+    D.agentMonitor.pending = {
+      signal: signal,
+      promptAt: Date.now(),
+      dueAt: Date.now() + (signal.type === 'inactive' ? 2 * 60 * 1000 : 10 * 60 * 1000)
+    };
+    save();
+    setAgentMonitorStatus('acting', 'Agent 主动发起关怀', signal.reason || signal.question || plan.goal);
+    go('talk');
+    var box = $('#talkHeard');
+    box.hidden = false;
+    box.innerHTML = '<div class="lbl">微光 Agent 主动发现</div><div class="txt">' +
+      esc(signal.reason || signal.question || plan.goal) + '</div>';
+    answer(signal.prompt, 'agent', plan, true);
+  }
+
+  function escalateProactiveSignal(pending) {
+    var signal = pending && pending.signal;
+    if (!signal || signal.type !== 'inactive') {
+      D.agentMonitor.pending = null;
+      save();
+      return;
+    }
+    var plan = WGAgent.buildProactiveEscalation(signal);
+    if (!plan) return;
+    plan.signal = signal;
+    D.agentMonitor.pending = null;
+    ensureAgentMemory();
+    D.agentMemory.pending = null;
+    D.inactiveAlertAt = Date.now();
+    save();
+    syncNow();
+    setAgentMonitorStatus('alert', '老人未回应，正在升级家庭协同',
+      '主动询问后仍未收到回应，安全 Agent 正在通知家人。');
+    answer('老人没有回应主动询问，请检查平安状态并通知家人。', 'agent', plan, true);
+  }
+
+  function agentMonitorTick() {
+    ensureAgentMonitor();
+    var pending = D.agentMonitor.pending;
+    if (pending) {
+      if (pending.signal && pending.signal.type === 'inactive' &&
+          lastActiveAt() > (pending.promptAt || 0) + 1000) {
+        D.agentMonitor.pending = null;
+        save();
+        setAgentMonitorStatus('monitor', 'Agent 已收到你的回应', '继续观察用药、活动和日程状态。');
+        return;
+      }
+      if (Date.now() >= (pending.dueAt || 0)) {
+        if (pending.signal && pending.signal.type === 'inactive') {
+          escalateProactiveSignal(pending);
+        } else {
+          D.agentMonitor.pending = null;
+          save();
+          setAgentMonitorStatus('monitor', 'Agent 正在继续观察', '主动提醒已完成，没有发现需要升级的风险。');
+        }
+      }
+      return;
+    }
+    var signal = collectProactiveSignal();
+    if (signal) startProactiveSignal(signal);
+  }
+
+  function startAgentMonitor() {
+    if (AGENT_MONITOR_TIMER) clearInterval(AGENT_MONITOR_TIMER);
+    AGENT_MONITOR_TIMER = setInterval(agentMonitorTick, 30 * 1000);
+    setTimeout(agentMonitorTick, 5000);
+    setAgentMonitorStatus('monitor', '正在观察家庭状态',
+      '持续关注用药、活动、日程和平安状态；发现异常时会主动发起询问。');
   }
 
   /* ---------- 位置 ---------- */
@@ -4074,11 +4343,13 @@
      ========================================================== */
 
   function traceStepLabel(s) {
-    var cls = s.name === '听懂' ? 'is-hear' :
-      (s.name === '理解' ? 'is-think' :
-      (s.name === '规划' ? 'is-plan' :
-      (s.name === '安全检查' ? 'is-guard' :
-      (s.name === '观察' ? 'is-observe' : 'is-act'))));
+    var cls = 'is-act';
+    if (s.name === '听懂') cls = 'is-hear';
+    else if (s.name === '理解') cls = 'is-think';
+    else if (s.name === '规划') cls = 'is-plan';
+    else if (s.name === '安全检查' || s.name === '安全 Agent') cls = 'is-guard';
+    else if (s.name === '反思') cls = 'is-reflect';
+    else if (s.name === '观察') cls = 'is-observe';
     return '<li class="' + cls + '">' +
       '<span class="ts-name">' + esc(s.name) + '</span>' +
       '<span class="ts-note">' + esc(s.note || '') + '</span>' +
@@ -4118,14 +4389,17 @@
         sum.textContent = '还没有记录。跟它说句话，这里就会记下来。';
       } else {
         var n = Math.min(20, list.length), total = 0;
-        var toolCalls = 0, urgent = 0;
+        var toolCalls = 0, urgent = 0, replans = 0, proactive = 0;
         list.slice(0, n).forEach(function (t) {
           total += (t.ms || 0);
           toolCalls += (t.tools || []).length;
           if (t.plan && t.plan.risk === 'urgent') urgent++;
+          if ((t.steps || []).some(function (step) { return step.name === '反思'; })) replans++;
+          if (t.plan && t.plan.source === 'proactive-agent') proactive++;
         });
         sum.textContent = '记录了 ' + list.length + ' 次 Agent 任务；最近 ' + n +
           ' 次共调用 ' + toolCalls + ' 个工具，其中紧急协同 ' + urgent +
+          ' 次、主动发起 ' + proactive + ' 次、重新规划 ' + replans +
           ' 次，平均 ' + Math.round(total / n) + ' 毫秒。长期记忆 ' +
           (D.agentMemory.facts || []).length + ' 条。';
       }
@@ -4148,7 +4422,8 @@
       var plan = '';
       if (t.plan) {
         plan = '<div class="tc-agent">' +
-          '<span class="tc-agent-type">' + esc(t.plan.source === 'llm' ? '模型规划' : '本地安全规划') + '</span>' +
+          '<span class="tc-agent-type">' + esc(t.plan.source === 'llm' ? '模型规划' :
+            (t.plan.source === 'proactive-agent' ? '主动关怀 Agent' : '本地安全规划')) + '</span>' +
           '<b>' + esc(t.plan.goal || '') + '</b>' +
           '<span class="tc-risk ' + esc(t.plan.risk || 'normal') + '">' +
             esc(t.plan.risk === 'urgent' ? '紧急协同' : (t.plan.risk === 'caution' ? '需谨慎' : '常规')) +
@@ -4158,7 +4433,19 @@
           ? '<div class="tc-safety">安全门：' + esc(t.plan.safetyNotes.join(' · ')) + '</div>'
           : '');
       }
-      return '<div class="trace-card">' + head + heard + plan +
+      var safety = '';
+      if (t.safety) {
+        safety = '<div class="tc-safety-agent"><b>安全 Agent</b>' +
+          '<span class="' + esc(t.safety.decision || '') + '">' +
+            esc(t.safety.decision === 'approve' ? '批准执行' :
+              (t.safety.decision === 'needs-confirmation' ? '需要确认' : '已修正风险')) +
+          '</span>' +
+          (t.safety.enforced && t.safety.enforced.length
+            ? '<small>' + esc(t.safety.enforced.join(' · ')) + '</small>'
+            : '') +
+        '</div>';
+      }
+      return '<div class="trace-card">' + head + heard + plan + safety +
         '<ul class="tc-steps">' + steps + '</ul>' + result +
         '<div class="tc-ms">一共 ' + (t.ms || 0) + ' 毫秒</div>' +
       '</div>';
@@ -4351,6 +4638,31 @@
         }
       });
     }
+
+    function submitHomeGoal(text) {
+      text = String(text || '').trim();
+      if (!text) return;
+      go('talk');
+      lastHeard = text;
+      showHeard(text, true);
+      answer(text, 'text');
+    }
+    $('#btnHomeGoalSend').addEventListener('click', function () {
+      submitHomeGoal($('#homeGoalInput').value);
+      $('#homeGoalInput').value = '';
+    });
+    $('#homeGoalInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        submitHomeGoal($('#homeGoalInput').value);
+        $('#homeGoalInput').value = '';
+      }
+    });
+    $$('[data-agent-goal]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        submitHomeGoal(btn.getAttribute('data-agent-goal'));
+      });
+    });
+    $('#btnHomeAgentTrace').addEventListener('click', function () { go('trace'); });
 
     // 文字输入：语音不可用、环境嘈杂或需要补充信息时使用
     var agentTextInput = $('#agentTextInput');
@@ -4789,8 +5101,10 @@
       closeReminder();
     });
     $('#btnPlanOk').addEventListener('click', closePlanReminder);
-    document.addEventListener('visibilitychange', function () { if (!document.hidden) pollFamilyMsg(); });
-    window.addEventListener('focus', function () { pollFamilyMsg(); });
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) { pollFamilyMsg(); pollAgentCases(); }
+    });
+    window.addEventListener('focus', function () { pollFamilyMsg(); pollAgentCases(); });
 
     $('#btnMsgOk').addEventListener('click', function () { $('#msgModal').hidden = true; pendingFamilyMsg = null; stopSpeaking(); });
     $('#btnAgentConfirm').addEventListener('click', function () { closeAgentConfirm(true); });
@@ -4891,12 +5205,15 @@
     renderNavSummary();
     pollFamilyMsg();
     setInterval(pollFamilyMsg, 20000);
+    pollAgentCases();
+    setInterval(pollAgentCases, 15000);
     renderContacts();
     renderRecords();
     renderSettings();
     renderEnvStatus();
     initWeatherScene();
     renderWeather();
+    startAgentMonitor();
     // 恢复上次的活动时间；没有记录就当作从现在开始
     ACTIVITY.last = D.lastActiveAt || Date.now();
     if (!D.lastActiveAt) { D.lastActiveAt = ACTIVITY.last; save(); }
